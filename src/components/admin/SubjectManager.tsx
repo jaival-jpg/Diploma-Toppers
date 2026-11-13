@@ -1,0 +1,367 @@
+import { useMemo, useState } from 'react';
+import { Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { deleteSubjectSafe, saveSubject } from '../../services/firestoreCatalog';
+import type { Branch, Semester, Subject } from '../../types/academic';
+import { slugify } from '../../utils/slugify';
+
+interface SubjectManagerProps {
+  branches: Branch[];
+  semesters: Semester[];
+  subjects: Subject[];
+  onRefresh: () => Promise<void>;
+  initialCreate?: boolean;
+}
+
+export function SubjectManager({
+  branches,
+  semesters,
+  subjects,
+  onRefresh,
+  initialCreate = false,
+}: SubjectManagerProps) {
+  const [showForm, setShowForm] = useState(initialCreate);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [filterBranch, setFilterBranch] = useState<string>('ALL');
+
+  const [branchId, setBranchId] = useState<string>(branches[0]?.id || '');
+  const branchSemesters = useMemo(
+    () => semesters.filter((s) => s.branchId === branchId).sort((a, b) => a.semesterNumber - b.semesterNumber),
+    [semesters, branchId]
+  );
+  const [semesterId, setSemesterId] = useState<string>('');
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [slug, setSlug] = useState('');
+  const [description, setDescription] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Subject | null>(null);
+
+  const branchMap = new Map(branches.map((b) => [b.id, b]));
+  const semesterMap = new Map(semesters.map((s) => [s.id, s]));
+
+  const effectiveSemesterId =
+    branchSemesters.some((s) => s.id === semesterId) ? semesterId : branchSemesters[0]?.id || '';
+
+  const openCreate = () => {
+    const defaultBranch = branches[0]?.id || '';
+    const firstSem = semesters.find((s) => s.branchId === defaultBranch)?.id || '';
+    setEditingId(null);
+    setBranchId(defaultBranch);
+    setSemesterId(firstSem);
+    setName('');
+    setCode('');
+    setSlug('');
+    setDescription('');
+    setIsActive(true);
+    setError(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (subj: Subject) => {
+    setEditingId(subj.id);
+    setBranchId(subj.branchId);
+    setSemesterId(subj.semesterId);
+    setName(subj.name);
+    setCode(subj.code);
+    setSlug(subj.slug);
+    setDescription(subj.description);
+    setIsActive(subj.isActive);
+    setError(null);
+    setShowForm(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!effectiveSemesterId) {
+      setError('Please select a valid semester.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await saveSubject(
+        {
+          branchId,
+          semesterId: effectiveSemesterId,
+          name,
+          code,
+          slug: slug || slugify(name),
+          description,
+          isActive,
+        },
+        editingId || undefined
+      );
+      setShowForm(false);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save subject.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (subj: Subject) => {
+    setError(null);
+    try {
+      await deleteSubjectSafe(subj.id);
+      setConfirmDelete(null);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete subject.');
+      setConfirmDelete(null);
+    }
+  };
+
+  const filteredSubjects = subjects.filter((s) => filterBranch === 'ALL' || s.branchId === filterBranch);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-[#202124] dark:text-white">Manage Subjects</h2>
+          <p className="text-sm text-[#666666] dark:text-slate-400">
+            Add subjects with GTU codes and SEO-friendly slugs to any branch and semester.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={openCreate}
+          disabled={branches.length === 0 || semesters.length === 0}
+          className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-[#1769D2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Add New Subject</span>
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
+      {showForm && (
+        <form
+          onSubmit={(e) => void handleSubmit(e)}
+          className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 dark:border-slate-800 dark:bg-slate-900"
+        >
+          <h3 className="text-base font-bold text-[#202124] dark:text-white">
+            {editingId ? 'Edit Subject' : 'New Subject'}
+          </h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Branch</label>
+              <select
+                required
+                value={branchId}
+                onChange={(e) => {
+                  setBranchId(e.target.value);
+                  const first = semesters.find((s) => s.branchId === e.target.value);
+                  setSemesterId(first?.id || '');
+                }}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Semester</label>
+              <select
+                required
+                value={effectiveSemesterId}
+                onChange={(e) => setSemesterId(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+              >
+                {branchSemesters.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Subject Name</label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (!editingId) setSlug(slugify(e.target.value));
+                }}
+                placeholder="e.g., Database Management System"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold">GTU Subject Code</label>
+              <input
+                type="text"
+                required
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="e.g., 4331602"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-semibold">URL Slug</label>
+              <input
+                type="text"
+                required
+                value={slug}
+                onChange={(e) => setSlug(slugify(e.target.value))}
+                placeholder="e.g., database-management-system"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold">Description</label>
+            <textarea
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Brief subject overview for students and search engines..."
+              className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-[#1769D2]"
+            />
+            <span>Active (visible to students)</span>
+          </label>
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-60"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              <span>{editingId ? 'Save Changes' : 'Create Subject'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="min-h-[40px] rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {confirmDelete && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/50 dark:bg-red-950/30">
+          <p className="text-sm font-semibold text-red-900 dark:text-red-200">
+            Delete subject &ldquo;{confirmDelete.name}&rdquo; ({confirmDelete.code})?
+          </p>
+          <div className="mt-4 flex gap-3">
+            <button
+              type="button"
+              onClick={() => void handleDelete(confirmDelete)}
+              className="rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Confirm Delete
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(null)}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <label className="text-xs font-semibold text-[#666666] dark:text-slate-400">Filter by Branch:</label>
+        <select
+          value={filterBranch}
+          onChange={(e) => setFilterBranch(e.target.value)}
+          className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+        >
+          <option value="ALL">All Branches</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-[#666666] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+                <th className="px-4 py-3">Code</th>
+                <th className="px-4 py-3">Subject Name</th>
+                <th className="px-4 py-3">Branch / Semester</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filteredSubjects.map((s) => (
+                <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                  <td className="px-4 py-3 font-mono font-semibold">{s.code}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-[#202124] dark:text-white">{s.name}</div>
+                    <div className="font-mono text-xs text-[#666666] dark:text-slate-400">/{s.slug}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-[#666666] dark:text-slate-400">
+                    {branchMap.get(s.branchId)?.name} · {semesterMap.get(s.semesterId)?.name}
+                  </td>
+                  <td className="px-4 py-3 text-xs font-semibold">
+                    <span className={s.isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
+                      {s.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(s)}
+                        aria-label={`Edit ${s.name}`}
+                        className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:text-slate-300"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(s)}
+                        aria-label={`Delete ${s.name}`}
+                        className="rounded-lg border border-slate-200 p-2 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-slate-700 dark:hover:bg-red-950/30"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {filteredSubjects.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-[#666666] dark:text-slate-400">
+                    No subjects created yet. Click &ldquo;Add New Subject&rdquo; to add a subject.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

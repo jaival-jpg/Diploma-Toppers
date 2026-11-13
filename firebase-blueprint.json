@@ -1,0 +1,191 @@
+{
+  "entities": {
+    "Branch": {
+      "title": "Branch",
+      "description": "GTU Diploma Engineering Branch",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 16, "pattern": "^[a-zA-Z0-9\\-]+$" },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 120, "pattern": "^[a-z0-9\\-]+$" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "isActive": { "type": "boolean" },
+        "displayOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "code", "slug", "description", "isActive", "displayOrder", "createdAt", "updatedAt"]
+    },
+    "Semester": {
+      "title": "Semester",
+      "description": "Engineering branch semester (1 to 6)",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "semesterNumber": { "type": "integer" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "isActive": { "type": "boolean" },
+        "displayOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["branchId", "semesterNumber", "name", "isActive", "displayOrder", "createdAt", "updatedAt"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Academic subject assigned to a branch and semester",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "semesterId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "code": { "type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-zA-Z0-9\\-]+$" },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
+        "description": { "type": "string", "maxLength": 1500 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["branchId", "semesterId", "name", "code", "slug", "description", "isActive", "createdAt", "updatedAt"]
+    },
+    "Paper": {
+      "title": "Paper",
+      "description": "GTU previous examination question paper PDF record",
+      "type": "object",
+      "properties": {
+        "subjectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "semesterId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "examSession": { "type": "string", "enum": ["Summer", "Winter"] },
+        "examYear": { "type": "integer" },
+        "pdfStoragePath": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "originalFilename": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fileSize": { "type": "integer" },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
+        "isActive": { "type": "boolean" },
+        "downloadCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subjectId", "branchId", "semesterId", "title", "examSession", "examYear", "pdfStoragePath", "originalFilename", "fileSize", "slug", "isActive", "downloadCount", "createdAt", "updatedAt"]
+    },
+    "Advertisement": {
+      "title": "Advertisement",
+      "description": "Adsterra (Banner, Native Banner, Popunder, Social Bar, Smartlink) or custom banner advertisement",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "adType": { "type": "string", "enum": ["banner", "native_banner", "popunder", "social_bar", "smartlink", "custom"] },
+        "bannerSize": { "type": "string", "maxLength": 20 },
+        "adCode": { "type": "string", "maxLength": 10000 },
+        "imageStoragePath": { "type": "string", "maxLength": 500 },
+        "destinationUrl": { "type": "string", "maxLength": 1000 },
+        "placement": {
+          "type": "string",
+          "enum": [
+            "global",
+            "home_above_branches",
+            "home_below_branches",
+            "branch_above_semesters",
+            "branch_below_semesters",
+            "semester_above_subjects",
+            "semester_below_subjects",
+            "subject_above_papers",
+            "subject_below_papers",
+            "paper_above_details",
+            "paper_below_details",
+            "home_top",
+            "branch",
+            "semester",
+            "subject",
+            "paper",
+            "admin_dashboard"
+          ]
+        },
+        "isActive": { "type": "boolean" },
+        "startDate": { "type": "string", "maxLength": 40 },
+        "endDate": { "type": "string", "maxLength": 40 },
+        "displayOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "adType", "placement", "isActive", "displayOrder", "createdAt", "updatedAt"]
+    },
+    "WebsiteSetting": {
+      "title": "WebsiteSetting",
+      "description": "Public website configuration key-value record",
+      "type": "object",
+      "properties": {
+        "settingKey": { "type": "string", "minLength": 2, "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "settingValue": { "type": "string", "maxLength": 2000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["settingKey", "settingValue", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized administrator account and role",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["super_admin", "admin"] },
+        "isActive": { "type": "boolean" },
+        "inviteId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "isActive", "createdAt", "updatedAt"]
+    },
+    "AdminInvite": {
+      "title": "AdminInvite",
+      "description": "Invited administrator email and pre-assigned role",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "role": { "type": "string", "enum": ["super_admin", "admin"] },
+        "isActive": { "type": "boolean" },
+        "invitedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "isActive", "invitedByUid", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/branches/{branchId}": {
+      "schema": { "$ref": "#/entities/Branch" },
+      "description": "GTU engineering branches"
+    },
+    "/semesters/{semesterId}": {
+      "schema": { "$ref": "#/entities/Semester" },
+      "description": "Semesters belonging to branches"
+    },
+    "/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Subjects belonging to branches and semesters"
+    },
+    "/papers/{paperId}": {
+      "schema": { "$ref": "#/entities/Paper" },
+      "description": "GTU question papers linked to subjects"
+    },
+    "/advertisements/{adId}": {
+      "schema": { "$ref": "#/entities/Advertisement" },
+      "description": "Advertisements (AdSense or custom banners)"
+    },
+    "/website_settings/{settingKey}": {
+      "schema": { "$ref": "#/entities/WebsiteSetting" },
+      "description": "Public website SEO and branding settings"
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized administrator profiles and RBAC roles"
+    },
+    "/admin_invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/AdminInvite" },
+      "description": "Pending administrator email invitations"
+    }
+  }
+}

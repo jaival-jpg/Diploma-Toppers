@@ -1,0 +1,259 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---- Global Hardened Helper Primitives ----
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidSlug(s) {
+      return s is string && s.size() >= 2 && s.size() <= 160 && s.matches('^[a-z0-9\\-]+$');
+    }
+
+    function isValidCode(c) {
+      return c is string && c.size() >= 1 && c.size() <= 32 && c.matches('^[a-zA-Z0-9\\-]+$');
+    }
+
+    // ---- Entity Validation Blueprints ----
+
+    function isValidBranch(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+        && isValidCode(data.code)
+        && isValidSlug(data.slug)
+        && data.description is string && data.description.size() <= 1000
+        && data.isActive is bool
+        && data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSemester(data) {
+      return isValidId(data.branchId)
+        && data.semesterNumber is int && data.semesterNumber >= 1 && data.semesterNumber <= 6
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.isActive is bool
+        && data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSubject(data) {
+      return isValidId(data.branchId)
+        && isValidId(data.semesterId)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 160
+        && isValidCode(data.code)
+        && isValidSlug(data.slug)
+        && data.description is string && data.description.size() <= 1500
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPaper(data) {
+      return isValidId(data.subjectId)
+        && isValidId(data.branchId)
+        && isValidId(data.semesterId)
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 200
+        && (data.examSession == 'Summer' || data.examSession == 'Winter')
+        && data.examYear is int && data.examYear >= 2000 && data.examYear <= 2100
+        && data.pdfStoragePath is string && data.pdfStoragePath.size() >= 1 && data.pdfStoragePath.size() <= 500
+        && data.originalFilename is string && data.originalFilename.size() >= 1 && data.originalFilename.size() <= 255
+        && data.fileSize is int && data.fileSize >= 1 && data.fileSize <= 52428800
+        && isValidSlug(data.slug)
+        && data.isActive is bool
+        && data.downloadCount is int && data.downloadCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdvertisement(data) {
+      return data.title is string && data.title.size() >= 2 && data.title.size() <= 160
+        && (
+          data.adType == 'banner'
+          || data.adType == 'native_banner'
+          || data.adType == 'popunder'
+          || data.adType == 'social_bar'
+          || data.adType == 'smartlink'
+          || data.adType == 'custom'
+        )
+        && (!('bannerSize' in data) || (data.bannerSize is string && data.bannerSize.size() <= 20))
+        && (!('adCode' in data) || (data.adCode is string && data.adCode.size() <= 10000))
+        && (!('imageStoragePath' in data) || (data.imageStoragePath is string && data.imageStoragePath.size() <= 500))
+        && (!('destinationUrl' in data) || (data.destinationUrl is string && data.destinationUrl.size() <= 1000))
+        && (
+          data.placement == 'global'
+          || data.placement == 'home_above_branches'
+          || data.placement == 'home_below_branches'
+          || data.placement == 'branch_above_semesters'
+          || data.placement == 'branch_below_semesters'
+          || data.placement == 'semester_above_subjects'
+          || data.placement == 'semester_below_subjects'
+          || data.placement == 'subject_above_papers'
+          || data.placement == 'subject_below_papers'
+          || data.placement == 'paper_above_details'
+          || data.placement == 'paper_below_details'
+          || data.placement == 'home_top'
+          || data.placement == 'branch'
+          || data.placement == 'semester'
+          || data.placement == 'subject'
+          || data.placement == 'paper'
+          || data.placement == 'admin_dashboard'
+        )
+        && data.isActive is bool
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 40))
+        && (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 40))
+        && data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWebsiteSetting(data) {
+      return isValidId(data.settingKey)
+        && data.settingValue is string && data.settingValue.size() <= 2000
+        && data.updatedAt is timestamp;
+    }
+
+    // ---- Collection Rules ----
+
+    match /test/{docId} {
+      allow get: if isValidId(docId) && docId == 'connection';
+    }
+
+    match /branches/{branchId} {
+      allow get: if isValidId(branchId);
+      allow list: if true;
+      allow create: if isValidId(branchId)
+        && incoming().keys().hasAll(['name', 'code', 'slug', 'description', 'isActive', 'displayOrder', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['name', 'code', 'slug', 'description', 'isActive', 'displayOrder', 'createdAt', 'updatedAt'])
+        && isValidBranch(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(branchId)
+        && isValidBranch(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'slug', 'description', 'isActive', 'displayOrder', 'updatedAt']);
+      allow delete: if isValidId(branchId);
+    }
+
+    match /semesters/{semesterId} {
+      allow get: if isValidId(semesterId);
+      allow list: if true;
+      allow create: if isValidId(semesterId)
+        && incoming().keys().hasAll(['branchId', 'semesterNumber', 'name', 'isActive', 'displayOrder', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['branchId', 'semesterNumber', 'name', 'isActive', 'displayOrder', 'createdAt', 'updatedAt'])
+        && isValidSemester(incoming())
+        && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(semesterId)
+        && isValidSemester(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().branchId == existing().branchId
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['semesterNumber', 'name', 'isActive', 'displayOrder', 'updatedAt']);
+      allow delete: if isValidId(semesterId);
+    }
+
+    match /subjects/{subjectId} {
+      allow get: if isValidId(subjectId);
+      allow list: if true;
+      allow create: if isValidId(subjectId)
+        && incoming().keys().hasAll(['branchId', 'semesterId', 'name', 'code', 'slug', 'description', 'isActive', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['branchId', 'semesterId', 'name', 'code', 'slug', 'description', 'isActive', 'createdAt', 'updatedAt'])
+        && isValidSubject(incoming())
+        && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
+        && exists(/databases/$(database)/documents/semesters/$(incoming().semesterId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(subjectId)
+        && isValidSubject(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
+        && exists(/databases/$(database)/documents/semesters/$(incoming().semesterId))
+        && incoming().diff(existing()).affectedKeys().hasOnly(['branchId', 'semesterId', 'name', 'code', 'slug', 'description', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(subjectId);
+    }
+
+    match /papers/{paperId} {
+      allow get: if isValidId(paperId);
+      allow list: if true;
+      allow create: if isValidId(paperId)
+        && incoming().keys().hasAll(['subjectId', 'branchId', 'semesterId', 'title', 'examSession', 'examYear', 'pdfStoragePath', 'originalFilename', 'fileSize', 'slug', 'isActive', 'downloadCount', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['subjectId', 'branchId', 'semesterId', 'title', 'examSession', 'examYear', 'pdfStoragePath', 'originalFilename', 'fileSize', 'slug', 'isActive', 'downloadCount', 'createdAt', 'updatedAt'])
+        && isValidPaper(incoming())
+        && incoming().downloadCount == 0
+        && exists(/databases/$(database)/documents/subjects/$(incoming().subjectId))
+        && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
+        && exists(/databases/$(database)/documents/semesters/$(incoming().semesterId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(paperId)
+        && isValidPaper(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/subjects/$(incoming().subjectId))
+        && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
+        && exists(/databases/$(database)/documents/semesters/$(incoming().semesterId))
+        && incoming().diff(existing()).affectedKeys().hasOnly(['subjectId', 'branchId', 'semesterId', 'title', 'examSession', 'examYear', 'pdfStoragePath', 'originalFilename', 'fileSize', 'slug', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(paperId);
+    }
+
+    match /advertisements/{adId} {
+      allow get: if isValidId(adId);
+      allow list: if true;
+      allow create: if isValidId(adId)
+        && incoming().keys().hasAll(['title', 'adType', 'placement', 'isActive', 'displayOrder', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['title', 'adType', 'bannerSize', 'adCode', 'imageStoragePath', 'destinationUrl', 'placement', 'isActive', 'startDate', 'endDate', 'displayOrder', 'createdAt', 'updatedAt'])
+        && isValidAdvertisement(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(adId)
+        && isValidAdvertisement(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'adType', 'bannerSize', 'adCode', 'imageStoragePath', 'destinationUrl', 'placement', 'isActive', 'startDate', 'endDate', 'displayOrder', 'updatedAt']);
+      allow delete: if isValidId(adId);
+    }
+
+    match /website_settings/{settingKey} {
+      allow get: if isValidId(settingKey);
+      allow list: if true;
+      allow create: if isValidId(settingKey)
+        && incoming().settingKey == settingKey
+        && incoming().keys().hasAll(['settingKey', 'settingValue', 'updatedAt'])
+        && incoming().keys().hasOnly(['settingKey', 'settingValue', 'updatedAt'])
+        && isValidWebsiteSetting(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(settingKey)
+        && isValidWebsiteSetting(incoming())
+        && incoming().settingKey == existing().settingKey
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['settingValue', 'updatedAt']);
+      allow delete: if isValidId(settingKey);
+    }
+
+    match /admins/{uid} {
+      allow read, write: if false;
+    }
+
+    match /admin_invites/{inviteId} {
+      allow read, write: if false;
+    }
+  }
+}

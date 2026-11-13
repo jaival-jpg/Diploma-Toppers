@@ -1,0 +1,6 @@
+{
+  "name": "DiplomaToppers",
+  "description": "GTU Diploma Engineering previous year question papers organized by branch, semester, subject, and Summer/Winter examination sessions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
