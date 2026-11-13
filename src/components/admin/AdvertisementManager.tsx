@@ -138,6 +138,10 @@ export function AdvertisementManager({
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Banner upload requires the backend server. You can paste an image URL directly.');
+      }
       const json = (await res.json()) as { imageStoragePath?: string; error?: string };
       if (!res.ok || !json.imageStoragePath) {
         throw new Error(json.error || 'Banner upload failed.');

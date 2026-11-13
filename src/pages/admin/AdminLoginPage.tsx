@@ -25,7 +25,7 @@ export function AdminLoginPage() {
       await loginWithPassword(password);
       navigate('/admin/dashboard', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Incorrect password.');
+      setError(err instanceof Error ? err.message : 'Incorrect password');
     } finally {
       setSubmitting(false);
     }

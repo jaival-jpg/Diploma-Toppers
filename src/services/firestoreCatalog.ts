@@ -605,10 +605,14 @@ export async function savePaper(
   }
 }
 
-export async function deletePaperRecord(paperId: string, token: string, storagePath?: string): Promise<void> {
+export async function deletePaperRecord(
+  paperId: string,
+  token?: string | null,
+  storagePath?: string
+): Promise<void> {
   try {
     await deleteDoc(doc(db, 'papers', paperId));
-    if (storagePath && storagePath.startsWith('/api/files/')) {
+    if (token && storagePath && storagePath.startsWith('/api/files/')) {
       await fetch('/api/admin/files', {
         method: 'DELETE',
         headers: {

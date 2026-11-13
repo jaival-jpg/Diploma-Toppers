@@ -225,7 +225,6 @@ export function PaperManager({
     setError(null);
     try {
       const token = await getIdToken();
-      if (!token) throw new Error('Authentication required.');
       await deletePaperRecord(p.id, token, p.pdfStoragePath);
       setConfirmDelete(null);
       await onRefresh();

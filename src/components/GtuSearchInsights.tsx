@@ -37,6 +37,10 @@ export function GtuSearchInsights({
           subjectCode,
         }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Live GTU search service is unavailable on this static deployment.');
+      }
       const json = (await res.json()) as GtuInsightsResponse & { error?: string };
       if (!res.ok) {
         throw new Error(json.error || 'Unable to retrieve live GTU search results.');
