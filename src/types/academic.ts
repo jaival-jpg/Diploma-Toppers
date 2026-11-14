@@ -123,3 +123,23 @@ export interface GtuInsightsResponse {
   summary: string;
   sources: GroundingSource[];
 }
+
+export type SeoPageType = 'home' | 'branch' | 'semester' | 'subject' | 'paper' | 'static';
+
+export interface SeoMetadata {
+  id: string;
+  pageType: SeoPageType;
+  pageReferenceId: string;
+  pageName: string;
+  pagePath: string;
+  seoTitle: string;
+  metaDescription: string;
+  canonicalUrl: string;
+  ogTitle: string;
+  ogDescription: string;
+  ogImageUrl: string;
+  robotsIndex: boolean;
+  robotsFollow: boolean;
+  isCustomized: boolean;
+  updatedAt?: string;
+}

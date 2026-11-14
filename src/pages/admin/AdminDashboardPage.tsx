@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  Globe,
   Layers,
   LayoutDashboard,
   LogOut,
@@ -21,6 +22,7 @@ import { AdvertisementManager } from '../../components/admin/AdvertisementManage
 import { BranchManager } from '../../components/admin/BranchManager';
 import { PaperManager } from '../../components/admin/PaperManager';
 import { SemesterManager } from '../../components/admin/SemesterManager';
+import { SeoManagementManager } from '../../components/admin/SeoManagementManager';
 import { SubjectManager } from '../../components/admin/SubjectManager';
 import { WebsiteSettingsManager } from '../../components/admin/WebsiteSettingsManager';
 import { useAuth } from '../../contexts/AuthContext';
@@ -31,11 +33,12 @@ import {
   getAllBranches,
   getAllPapers,
   getAllSemesters,
+  getAllSeoMetadata,
   getAllSubjects,
   getWebsiteSettings,
   initializeStandardGtuCatalog,
 } from '../../services/firestoreCatalog';
-import type { Advertisement, Branch, Paper, Semester, Subject, WebsiteSettingsMap } from '../../types/academic';
+import type { Advertisement, Branch, Paper, Semester, SeoMetadata, Subject, WebsiteSettingsMap } from '../../types/academic';
 
 export function AdminDashboardPage() {
   const { authReady, isAdmin, isSuperAdmin, logout } = useAuth();
@@ -52,6 +55,7 @@ export function AdminDashboardPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [ads, setAds] = useState<Advertisement[]>([]);
+  const [seoMetadata, setSeoMetadata] = useState<SeoMetadata[]>([]);
   const [settings, setSettings] = useState<WebsiteSettingsMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,23 +71,29 @@ export function AdminDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      let [b, sem, subj, pap, adList, siteSet] = await Promise.all([
+      let [b, sem, subj, pap, adList, seoList, siteSet] = await Promise.all([
         getAllBranches(),
         getAllSemesters(),
         getAllSubjects(),
         getAllPapers(),
         getAllAdvertisements(),
+        getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
         getWebsiteSettings(),
       ]);
       if (b.length === 0) {
         await initializeStandardGtuCatalog();
-        [b, sem] = await Promise.all([getAllBranches(), getAllSemesters()]);
+        [b, sem, seoList] = await Promise.all([
+          getAllBranches(),
+          getAllSemesters(),
+          getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
+        ]);
       }
       setBranches(b);
       setSemesters(sem);
       setSubjects(subj);
       setPapers(pap);
       setAds(adList);
+      setSeoMetadata(seoList);
       setSettings(siteSet);
       await refreshPublicCatalog();
     } catch (err) {
@@ -132,6 +142,7 @@ export function AdminDashboardPage() {
     { id: 'subjects', label: 'Manage Subjects', icon: BookOpen },
     { id: 'papers', label: 'Manage Papers', icon: FileText },
     { id: 'ads', label: 'Manage Advertisements', icon: Megaphone, superOnly: true },
+    { id: 'seo', label: 'SEO Management', icon: Globe },
     { id: 'settings', label: 'Website Settings', icon: Settings, superOnly: true },
   ];
 
@@ -321,6 +332,17 @@ export function AdminDashboardPage() {
                   ads={ads}
                   onRefresh={loadAdminData}
                   initialCreate={openCreateOnSwitch}
+                />
+              )}
+              {section === 'seo' && (
+                <SeoManagementManager
+                  branches={branches}
+                  semesters={semesters}
+                  subjects={subjects}
+                  papers={papers}
+                  seoMetadata={seoMetadata}
+                  settings={settings}
+                  onRefresh={loadAdminData}
                 />
               )}
               {section === 'settings' && isSuperAdmin && (

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useCatalog } from '../contexts/CatalogContext';
+import { normalizeHttpOrigin, normalizePagePath, resolveSiteOrigin } from '../services/seoDefaults';
 
 interface BreadcrumbEntry {
   name: string;
@@ -26,17 +27,37 @@ export function SeoHead({
   noindex = false,
   paperSchema,
 }: SeoHeadProps) {
-  const { settings } = useCatalog();
+  const { settings, seoMetadata } = useCatalog();
 
   useEffect(() => {
-    const baseOrigin =
-      settings.siteUrl && settings.siteUrl.trim()
-        ? settings.siteUrl.trim().replace(/\/+$/, '')
-        : window.location.origin;
-    const cleanPath = path === '/' ? '' : path;
-    const canonicalUrl = `${baseOrigin}${cleanPath}`;
+    const normalizedPath = normalizePagePath(path);
+    const dbRecord = noindex
+      ? undefined
+      : seoMetadata.find((item) => normalizePagePath(item.pagePath) === normalizedPath);
 
-    document.title = title;
+    const baseOrigin = resolveSiteOrigin(settings.siteUrl, window.location.origin);
+    const defaultCanonical =
+      normalizedPath === '/' ? `${baseOrigin}/` : `${baseOrigin}${normalizedPath}`;
+
+    const effectiveTitle = (dbRecord?.seoTitle && dbRecord.seoTitle.trim()) || title;
+    const effectiveDescription =
+      (dbRecord?.metaDescription && dbRecord.metaDescription.trim()) || description;
+    const dbCanonical = dbRecord?.canonicalUrl?.trim();
+    const effectiveCanonical =
+      dbCanonical && normalizeHttpOrigin(dbCanonical) ? dbCanonical : defaultCanonical;
+    const effectiveOgTitle =
+      (dbRecord?.ogTitle && dbRecord.ogTitle.trim()) || effectiveTitle;
+    const effectiveOgDescription =
+      (dbRecord?.ogDescription && dbRecord.ogDescription.trim()) || effectiveDescription;
+    const effectiveOgImage = (dbRecord?.ogImageUrl && dbRecord.ogImageUrl.trim()) || '';
+
+    const robotsDirective = noindex
+      ? 'noindex, nofollow'
+      : dbRecord
+      ? `${dbRecord.robotsIndex ? 'index' : 'noindex'}, ${dbRecord.robotsFollow ? 'follow' : 'nofollow'}`
+      : 'index, follow';
+
+    document.title = effectiveTitle;
 
     const setMeta = (selector: string, attrName: string, attrVal: string, content: string) => {
       let el = document.querySelector<HTMLMetaElement>(selector);
@@ -48,21 +69,39 @@ export function SeoHead({
       el.setAttribute('content', content);
     };
 
-    setMeta('meta[name="description"]', 'name', 'description', description);
-    setMeta('meta[property="og:title"]', 'property', 'og:title', title);
-    setMeta('meta[property="og:description"]', 'property', 'og:description', description);
-    setMeta('meta[property="og:url"]', 'property', 'og:url', canonicalUrl);
-    setMeta('meta[name="twitter:title"]', 'name', 'twitter:title', title);
-    setMeta('meta[name="twitter:description"]', 'name', 'twitter:description', description);
-    setMeta('meta[name="robots"]', 'name', 'robots', noindex ? 'noindex, nofollow' : 'index, follow');
+    const removeMeta = (selector: string) => {
+      const el = document.querySelector<HTMLMetaElement>(selector);
+      if (el) el.remove();
+    };
 
-    if (settings.googleVerification && settings.googleVerification.trim()) {
+    setMeta('meta[name="description"]', 'name', 'description', effectiveDescription);
+    setMeta('meta[property="og:title"]', 'property', 'og:title', effectiveOgTitle);
+    setMeta('meta[property="og:description"]', 'property', 'og:description', effectiveOgDescription);
+    setMeta('meta[property="og:url"]', 'property', 'og:url', effectiveCanonical);
+    setMeta('meta[name="twitter:title"]', 'name', 'twitter:title', effectiveOgTitle);
+    setMeta('meta[name="twitter:description"]', 'name', 'twitter:description', effectiveOgDescription);
+    setMeta('meta[name="robots"]', 'name', 'robots', robotsDirective);
+
+    if (effectiveOgImage) {
+      setMeta('meta[property="og:image"]', 'property', 'og:image', effectiveOgImage);
+      setMeta('meta[name="twitter:image"]', 'name', 'twitter:image', effectiveOgImage);
+    } else {
+      removeMeta('meta[property="og:image"]');
+      removeMeta('meta[name="twitter:image"]');
+    }
+
+    const rawVerif = settings.googleVerification?.trim() || '';
+    const verifMatch = rawVerif.match(/content=["']([^"']+)["']/i);
+    const verifToken = (verifMatch?.[1] || rawVerif).trim();
+    if (verifToken && /^[a-zA-Z0-9_-]{8,128}$/.test(verifToken)) {
       setMeta(
         'meta[name="google-site-verification"]',
         'name',
         'google-site-verification',
-        settings.googleVerification.trim()
+        verifToken
       );
+    } else {
+      removeMeta('meta[name="google-site-verification"]');
     }
 
     let canonicalLink = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
@@ -71,7 +110,7 @@ export function SeoHead({
       canonicalLink.setAttribute('rel', 'canonical');
       document.head.appendChild(canonicalLink);
     }
-    canonicalLink.setAttribute('href', canonicalUrl);
+    canonicalLink.setAttribute('href', effectiveCanonical);
 
     const existingDynamic = document.querySelectorAll('script[data-dt-jsonld="true"]');
     existingDynamic.forEach((node) => node.remove());
@@ -85,7 +124,7 @@ export function SeoHead({
           '@type': 'ListItem',
           position: idx + 1,
           name: b.name,
-          item: `${baseOrigin}${b.path === '/' ? '' : b.path}`,
+          item: b.path === '/' ? `${baseOrigin}/` : `${baseOrigin}${b.path}`,
         })),
       });
     }
@@ -95,7 +134,7 @@ export function SeoHead({
         '@type': 'DigitalDocument',
         name: paperSchema.name,
         encodingFormat: 'application/pdf',
-        url: canonicalUrl,
+        url: effectiveCanonical,
         ...(paperSchema.datePublished ? { datePublished: paperSchema.datePublished } : {}),
       });
     }
@@ -107,7 +146,7 @@ export function SeoHead({
       script.textContent = JSON.stringify(schema);
       document.head.appendChild(script);
     }
-  }, [title, description, path, breadcrumbs, noindex, paperSchema, settings]);
+  }, [title, description, path, breadcrumbs, noindex, paperSchema, settings, seoMetadata]);
 
   return null;
 }

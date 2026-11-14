@@ -127,6 +127,30 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSeoMetadata(data) {
+      return (
+          data.pageType == 'home'
+          || data.pageType == 'branch'
+          || data.pageType == 'semester'
+          || data.pageType == 'subject'
+          || data.pageType == 'paper'
+          || data.pageType == 'static'
+        )
+        && isValidId(data.pageReferenceId)
+        && data.pageName is string && data.pageName.size() >= 1 && data.pageName.size() <= 200
+        && data.pagePath is string && data.pagePath.size() >= 1 && data.pagePath.size() <= 300
+        && data.seoTitle is string && data.seoTitle.size() <= 200
+        && data.metaDescription is string && data.metaDescription.size() <= 400
+        && data.canonicalUrl is string && data.canonicalUrl.size() <= 500
+        && data.ogTitle is string && data.ogTitle.size() <= 200
+        && data.ogDescription is string && data.ogDescription.size() <= 400
+        && data.ogImageUrl is string && data.ogImageUrl.size() <= 500
+        && data.robotsIndex is bool
+        && data.robotsFollow is bool
+        && data.isCustomized is bool
+        && data.updatedAt is timestamp;
+    }
+
     // ---- Collection Rules ----
 
     match /test/{docId} {
@@ -246,6 +270,23 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['settingValue', 'updatedAt']);
       allow delete: if isValidId(settingKey);
+    }
+
+    match /seo_metadata/{seoId} {
+      allow get: if isValidId(seoId);
+      allow list: if true;
+      allow create: if isValidId(seoId)
+        && incoming().keys().hasAll(['pageType', 'pageReferenceId', 'pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt'])
+        && incoming().keys().hasOnly(['pageType', 'pageReferenceId', 'pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt'])
+        && isValidSeoMetadata(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(seoId)
+        && isValidSeoMetadata(incoming())
+        && incoming().pageType == existing().pageType
+        && incoming().pageReferenceId == existing().pageReferenceId
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt']);
+      allow delete: if isValidId(seoId);
     }
 
     match /admins/{uid} {

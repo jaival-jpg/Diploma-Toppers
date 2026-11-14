@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Download, ExternalLink, FileText, Search, Sun, Snowflake } from 'lucide-react';
+import { Download, FileText, Search, Sun, Snowflake } from 'lucide-react';
 import { AdSlot } from '../components/AdSlot';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { Footer } from '../components/Footer';
@@ -99,11 +99,11 @@ export function SubjectPage() {
     return (
       <article
         key={paper.id}
-        className="flex flex-col justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-900"
+        className="flex flex-col justify-between gap-4 rounded-2xl bg-gradient-to-br from-[#1769D2] to-[#0D47A1] p-5 text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md"
       >
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-[#666666] dark:text-slate-400 tabular-nums">
-            <span className="font-semibold text-[#1769D2] dark:text-blue-400">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-blue-100 tabular-nums">
+            <span className="font-semibold text-white">
               {paper.examSession} {paper.examYear}
             </span>
             <span aria-hidden="true">·</span>
@@ -112,35 +112,24 @@ export function SubjectPage() {
             <span>{paper.downloadCount} downloads</span>
           </div>
           <Link to={paperHref} className="block group">
-            <h3 className="text-base font-bold text-[#202124] transition-colors group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+            <h3 className="text-lg font-extrabold tracking-tight text-white transition-opacity group-hover:opacity-90">
               {paper.title}
             </h3>
           </Link>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="border-t border-white/20 pt-3">
           {hasPdf ? (
-            <>
-              <a
-                href={`/api/papers/${paper.id}/view`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-[#202124] transition-colors hover:border-[#1769D2] hover:text-[#1769D2] whitespace-nowrap dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                <span>View Paper</span>
-              </a>
-              <a
-                href={`/api/papers/${paper.id}/download`}
-                onClick={() => setTimeout(() => void refresh(), 800)}
-                className="inline-flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#1769D2] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#0D47A1] whitespace-nowrap"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Download PDF</span>
-              </a>
-            </>
+            <a
+              href={`/api/papers/${paper.id}/download`}
+              onClick={() => setTimeout(() => void refresh(), 800)}
+              className="inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#1769D2] shadow-sm transition-colors hover:bg-blue-50 whitespace-nowrap"
+            >
+              <Download className="h-4 w-4 text-[#1769D2]" />
+              <span>Download</span>
+            </a>
           ) : (
-            <span className="text-xs font-medium text-red-600 dark:text-red-400">
+            <span className="inline-block text-xs font-medium text-blue-100">
               PDF file missing
             </span>
           )}

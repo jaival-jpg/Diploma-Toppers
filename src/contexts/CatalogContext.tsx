@@ -6,6 +6,7 @@ import {
   getActiveSemesters,
   getActiveSubjects,
   getAllBranches,
+  getAllSeoMetadata,
   getWebsiteSettings,
   initializeStandardGtuCatalog,
 } from '../services/firestoreCatalog';
@@ -14,6 +15,7 @@ import type {
   Branch,
   Paper,
   Semester,
+  SeoMetadata,
   Subject,
   WebsiteSettingsMap,
 } from '../types/academic';
@@ -24,6 +26,7 @@ interface CatalogContextValue {
   subjects: Subject[];
   papers: Paper[];
   ads: Advertisement[];
+  seoMetadata: SeoMetadata[];
   settings: WebsiteSettingsMap;
   loading: boolean;
   error: string | null;
@@ -36,6 +39,7 @@ const CatalogContext = createContext<CatalogContextValue>({
   subjects: [],
   papers: [],
   ads: [],
+  seoMetadata: [],
   settings: {},
   loading: true,
   error: null,
@@ -48,6 +52,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [ads, setAds] = useState<Advertisement[]>([]);
+  const [seoMetadata, setSeoMetadata] = useState<SeoMetadata[]>([]);
   const [settings, setSettings] = useState<WebsiteSettingsMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,12 +61,13 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      let [b, sem, subj, pap, adList, siteSettings] = await Promise.all([
+      let [b, sem, subj, pap, adList, seoList, siteSettings] = await Promise.all([
         getActiveBranches(),
         getActiveSemesters(),
         getActiveSubjects(),
         getActivePapers(),
         getActiveAdvertisements(),
+        getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
         getWebsiteSettings(),
       ]);
 
@@ -69,9 +75,10 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         const allBranches = await getAllBranches();
         if (allBranches.length === 0) {
           await initializeStandardGtuCatalog();
-          [b, sem, siteSettings] = await Promise.all([
+          [b, sem, seoList, siteSettings] = await Promise.all([
             getActiveBranches(),
             getActiveSemesters(),
+            getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
             getWebsiteSettings(),
           ]);
         }
@@ -82,6 +89,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
       setSubjects(subj);
       setPapers(pap);
       setAds(adList);
+      setSeoMetadata(seoList);
       setSettings(siteSettings);
     } catch (err) {
       setError(
@@ -106,6 +114,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         subjects,
         papers,
         ads,
+        seoMetadata,
         settings,
         loading,
         error,

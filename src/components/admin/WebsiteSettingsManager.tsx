@@ -30,11 +30,34 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
     setMessage(null);
     setError(null);
     try {
+      const trimmedUrl = siteUrl.trim().replace(/\/+$/, '');
+      if (trimmedUrl) {
+        let valid = false;
+        try {
+          const parsed = new URL(trimmedUrl);
+          valid = (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.hostname);
+        } catch {
+          valid = false;
+        }
+        if (!valid) {
+          setError('Production Canonical Domain URL must start with https:// or http:// (e.g., https://diplomatoppers.in).');
+          setSaving(false);
+          return;
+        }
+      }
+
+      let cleanVerif = googleVerification.trim();
+      const metaMatch = cleanVerif.match(/content=["']([^"']+)["']/i);
+      if (metaMatch?.[1]) {
+        cleanVerif = metaMatch[1].trim();
+        setGoogleVerification(cleanVerif);
+      }
+
       await Promise.all([
         saveWebsiteSetting('siteTitle', siteTitle.trim()),
         saveWebsiteSetting('siteDescription', siteDescription.trim()),
-        saveWebsiteSetting('siteUrl', siteUrl.trim()),
-        saveWebsiteSetting('googleVerification', googleVerification.trim()),
+        saveWebsiteSetting('siteUrl', trimmedUrl),
+        saveWebsiteSetting('googleVerification', cleanVerif),
         saveWebsiteSetting('contactEmail', contactEmail.trim()),
         saveWebsiteSetting('aboutContent', aboutContent.trim()),
       ]);
@@ -86,6 +109,7 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
       )}
 
       <form
+        autoComplete="off"
         onSubmit={(e) => void handleSave(e)}
         className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 dark:border-slate-800 dark:bg-slate-900"
       >
@@ -94,6 +118,7 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
             <label className="mb-1 block text-xs font-semibold">Website Title</label>
             <input
               type="text"
+              autoComplete="off"
               value={siteTitle}
               onChange={(e) => setSiteTitle(e.target.value)}
               className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
@@ -103,6 +128,7 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
             <label className="mb-1 block text-xs font-semibold">Production Canonical Domain URL</label>
             <input
               type="url"
+              autoComplete="off"
               value={siteUrl}
               onChange={(e) => setSiteUrl(e.target.value)}
               placeholder="https://diplomatoppers.in"
@@ -113,9 +139,10 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
             <label className="mb-1 block text-xs font-semibold">Google Search Console Verification Code</label>
             <input
               type="text"
+              autoComplete="off"
               value={googleVerification}
               onChange={(e) => setGoogleVerification(e.target.value)}
-              placeholder="google-site-verification token value"
+              placeholder="Paste verification token or full meta tag"
               className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
             />
           </div>
@@ -123,6 +150,7 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
             <label className="mb-1 block text-xs font-semibold">Contact Support Email</label>
             <input
               type="email"
+              autoComplete="off"
               value={contactEmail}
               onChange={(e) => setContactEmail(e.target.value)}
               className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
@@ -158,6 +186,29 @@ export function WebsiteSettingsManager({ settings, onRefresh }: WebsiteSettingsM
           <span>Save Settings</span>
         </button>
       </form>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-3 dark:border-slate-800 dark:bg-slate-900">
+        <h3 className="text-base font-bold text-[#202124] dark:text-white">
+          Google Search Console &amp; Sitemap Submission
+        </h3>
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-[#666666] dark:text-slate-400">
+          <li>
+            Enter your production domain above (for example, <code className="font-mono text-[#202124] dark:text-slate-200">https://diplomatoppers.in</code>) and paste the verification token value from Google Search Console&apos;s HTML tag option into <strong>Google Search Console Verification Code</strong>.
+          </li>
+          <li>
+            Click <strong>Save Settings</strong> so the verification <code className="font-mono">meta</code> tag renders in the public homepage HTML.
+          </li>
+          <li>
+            In Google Search Console, open <strong>Sitemaps</strong> and submit:{' '}
+            <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-[#1769D2] dark:bg-slate-800 dark:text-blue-400">
+              {(/^https?:\/\//i.test(siteUrl.trim()) ? siteUrl.trim().replace(/\/+$/, '') : 'https://YOUR-DOMAIN')}/sitemap.xml
+            </code>
+          </li>
+          <li>
+            Verify key public URLs using the <strong>URL Inspection</strong> tool in Google Search Console. Note that submitting a sitemap helps discovery but does not guarantee indexing.
+          </li>
+        </ol>
+      </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-base font-bold text-[#202124] dark:text-white">

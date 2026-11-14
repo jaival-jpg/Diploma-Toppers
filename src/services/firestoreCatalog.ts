@@ -18,10 +18,21 @@ import type {
   ExamSession,
   Paper,
   Semester,
+  SeoMetadata,
+  SeoPageType,
   Subject,
   WebsiteSettingsMap,
 } from '../types/academic';
 import { sanitizeId, slugify } from '../utils/slugify';
+import {
+  buildBranchSeoDefaults,
+  buildPaperSeoDefaults,
+  buildSemesterSeoDefaults,
+  buildSubjectSeoDefaults,
+  collectCatalogPageDescriptors,
+  getSeoDocId,
+  type SeoPageDescriptor,
+} from './seoDefaults';
 
 function toIsoString(val: unknown): string | undefined {
   if (!val) return undefined;
@@ -150,6 +161,10 @@ export async function initializeStandardGtuCatalog(): Promise<{ createdBranches:
           updatedAt: serverTimestamp(),
         });
       }
+    }
+
+    if (createdBranches > 0 || createdSemesters > 0) {
+      await syncAllDefaultSeo().catch(() => {});
     }
 
     return { createdBranches, createdSemesters };
@@ -316,6 +331,223 @@ export async function getWebsiteSettings(): Promise<WebsiteSettingsMap> {
   }
 }
 
+export async function getAllSeoMetadata(): Promise<SeoMetadata[]> {
+  try {
+    const snap = await getDocs(collection(db, 'seo_metadata'));
+    return snap.docs.map((d) => mapDoc<SeoMetadata>(d.id, d.data()));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'seo_metadata');
+  }
+}
+
+async function getConfiguredSiteUrl(): Promise<string | undefined> {
+  try {
+    const snap = await getDoc(doc(db, 'website_settings', 'siteUrl'));
+    if (snap.exists()) {
+      const val = (snap.data() as { settingValue?: string }).settingValue;
+      return val?.trim() || undefined;
+    }
+  } catch {
+    // Fallback cleanly
+  }
+  return undefined;
+}
+
+async function upsertAutoSeoDescriptor(descriptor: SeoPageDescriptor): Promise<'created' | 'updated' | 'skipped'> {
+  const ref = doc(db, 'seo_metadata', descriptor.seoId);
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        pageType: descriptor.pageType,
+        pageReferenceId: descriptor.pageReferenceId,
+        pageName: descriptor.pageName.slice(0, 200),
+        pagePath: descriptor.pagePath.slice(0, 300),
+        seoTitle: descriptor.defaultTitle.slice(0, 200),
+        metaDescription: descriptor.defaultDescription.slice(0, 400),
+        canonicalUrl: descriptor.defaultCanonical.slice(0, 500),
+        ogTitle: descriptor.defaultTitle.slice(0, 200),
+        ogDescription: descriptor.defaultDescription.slice(0, 400),
+        ogImageUrl: '',
+        robotsIndex: descriptor.isPublished,
+        robotsFollow: descriptor.isPublished,
+        isCustomized: false,
+        updatedAt: serverTimestamp(),
+      });
+      return 'created';
+    }
+
+    const existing = snap.data() as Partial<SeoMetadata>;
+    if (existing.isCustomized) {
+      // Never overwrite customized SEO title/description/robots; only sync structural pageName/pagePath if changed
+      if (existing.pageName !== descriptor.pageName || existing.pagePath !== descriptor.pagePath) {
+        await updateDoc(ref, {
+          pageName: descriptor.pageName.slice(0, 200),
+          pagePath: descriptor.pagePath.slice(0, 300),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return 'skipped';
+    }
+
+    await updateDoc(ref, {
+      pageName: descriptor.pageName.slice(0, 200),
+      pagePath: descriptor.pagePath.slice(0, 300),
+      seoTitle: descriptor.defaultTitle.slice(0, 200),
+      metaDescription: descriptor.defaultDescription.slice(0, 400),
+      canonicalUrl: descriptor.defaultCanonical.slice(0, 500),
+      ogTitle: descriptor.defaultTitle.slice(0, 200),
+      ogDescription: descriptor.defaultDescription.slice(0, 400),
+      robotsIndex: descriptor.isPublished,
+      robotsFollow: descriptor.isPublished,
+      isCustomized: false,
+      updatedAt: serverTimestamp(),
+    });
+    return 'updated';
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `seo_metadata/${descriptor.seoId}`);
+  }
+}
+
+async function deleteSeoMetadataIfPresent(pageType: SeoPageType, pageReferenceId: string): Promise<void> {
+  const seoId = getSeoDocId(pageType, pageReferenceId);
+  try {
+    await deleteDoc(doc(db, 'seo_metadata', seoId));
+  } catch {
+    // Non-fatal if doc does not exist
+  }
+}
+
+export async function saveSeoMetadata(input: {
+  pageType: SeoPageType;
+  pageReferenceId: string;
+  pageName: string;
+  pagePath: string;
+  seoTitle: string;
+  metaDescription: string;
+  canonicalUrl: string;
+  ogTitle: string;
+  ogDescription: string;
+  ogImageUrl: string;
+  robotsIndex: boolean;
+  robotsFollow: boolean;
+  isCustomized?: boolean;
+}): Promise<string> {
+  const seoId = getSeoDocId(input.pageType, input.pageReferenceId);
+  const path = `seo_metadata/${seoId}`;
+  const ref = doc(db, 'seo_metadata', seoId);
+
+  try {
+    const existingSnap = await getDoc(ref);
+    const payload = {
+      pageName: input.pageName.trim().slice(0, 200),
+      pagePath: input.pagePath.trim().slice(0, 300),
+      seoTitle: input.seoTitle.trim().slice(0, 200),
+      metaDescription: input.metaDescription.trim().slice(0, 400),
+      canonicalUrl: input.canonicalUrl.trim().slice(0, 500),
+      ogTitle: input.ogTitle.trim().slice(0, 200),
+      ogDescription: input.ogDescription.trim().slice(0, 400),
+      ogImageUrl: input.ogImageUrl.trim().slice(0, 500),
+      robotsIndex: Boolean(input.robotsIndex),
+      robotsFollow: Boolean(input.robotsFollow),
+      isCustomized: input.isCustomized ?? true,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (existingSnap.exists()) {
+      await updateDoc(ref, payload);
+    } else {
+      await setDoc(ref, {
+        pageType: input.pageType,
+        pageReferenceId: input.pageReferenceId,
+        ...payload,
+      });
+    }
+    return seoId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function resetSeoMetadataToDefault(descriptor: SeoPageDescriptor): Promise<void> {
+  await saveSeoMetadata({
+    pageType: descriptor.pageType,
+    pageReferenceId: descriptor.pageReferenceId,
+    pageName: descriptor.pageName,
+    pagePath: descriptor.pagePath,
+    seoTitle: descriptor.defaultTitle,
+    metaDescription: descriptor.defaultDescription,
+    canonicalUrl: descriptor.defaultCanonical,
+    ogTitle: descriptor.defaultTitle,
+    ogDescription: descriptor.defaultDescription,
+    ogImageUrl: '',
+    robotsIndex: descriptor.isPublished,
+    robotsFollow: descriptor.isPublished,
+    isCustomized: false,
+  });
+}
+
+export async function syncAllDefaultSeo(params?: {
+  branches?: Branch[];
+  semesters?: Semester[];
+  subjects?: Subject[];
+  papers?: Paper[];
+  siteUrl?: string;
+  siteDescription?: string;
+}): Promise<{ created: number; updated: number; skippedCustomized: number }> {
+  const [branches, semesters, subjects, papers, settings, existingSeo] = await Promise.all([
+    params?.branches ? Promise.resolve(params.branches) : getAllBranches(),
+    params?.semesters ? Promise.resolve(params.semesters) : getAllSemesters(),
+    params?.subjects ? Promise.resolve(params.subjects) : getAllSubjects(),
+    params?.papers ? Promise.resolve(params.papers) : getAllPapers(),
+    getWebsiteSettings(),
+    getAllSeoMetadata(),
+  ]);
+
+  const descriptors = collectCatalogPageDescriptors({
+    branches,
+    semesters,
+    subjects,
+    papers,
+    siteUrl: params?.siteUrl ?? settings.siteUrl,
+    siteDescription: params?.siteDescription ?? settings.siteDescription,
+  });
+
+  const existingById = new Map(existingSeo.map((s) => [s.id, s]));
+  let created = 0;
+  let updated = 0;
+  let skippedCustomized = 0;
+
+  for (const desc of descriptors) {
+    const existing = existingById.get(desc.seoId);
+    if (!existing) {
+      await upsertAutoSeoDescriptor(desc);
+      created++;
+    } else if (existing.isCustomized) {
+      if (existing.pageName !== desc.pageName || existing.pagePath !== desc.pagePath) {
+        await updateDoc(doc(db, 'seo_metadata', desc.seoId), {
+          pageName: desc.pageName.slice(0, 200),
+          pagePath: desc.pagePath.slice(0, 300),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      skippedCustomized++;
+    } else if (
+      existing.seoTitle !== desc.defaultTitle ||
+      existing.metaDescription !== desc.defaultDescription ||
+      existing.canonicalUrl !== desc.defaultCanonical ||
+      existing.pagePath !== desc.pagePath ||
+      existing.pageName !== desc.pageName ||
+      existing.robotsIndex !== desc.isPublished
+    ) {
+      await upsertAutoSeoDescriptor(desc);
+      updated++;
+    }
+  }
+
+  return { created, updated, skippedCustomized };
+}
+
 // ---- Admin Mutations (CRUD + Validation + Safe Deletion) ----
 
 export async function saveBranch(
@@ -360,6 +592,24 @@ export async function saveBranch(
         updatedAt: serverTimestamp(),
       });
     }
+
+    const siteUrl = await getConfiguredSiteUrl();
+    await upsertAutoSeoDescriptor(
+      buildBranchSeoDefaults(
+        {
+          id,
+          name: input.name.trim(),
+          code: cleanCode,
+          slug: cleanSlug,
+          description: input.description.trim(),
+          isActive: input.isActive,
+        },
+        siteUrl
+      )
+    );
+    if (existingId) {
+      await syncAllDefaultSeo().catch(() => {});
+    }
     return id;
   } catch (error) {
     handleFirestoreError(error, existingId ? OperationType.UPDATE : OperationType.CREATE, path);
@@ -376,6 +626,7 @@ export async function deleteBranchSafe(branchId: string): Promise<void> {
   }
   try {
     await deleteDoc(doc(db, 'branches', branchId));
+    await deleteSeoMetadataIfPresent('branch', branchId);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `branches/${branchId}`);
   }
@@ -420,6 +671,23 @@ export async function saveSemester(
         updatedAt: serverTimestamp(),
       });
     }
+
+    const [branches, siteUrl] = await Promise.all([getAllBranches(), getConfiguredSiteUrl()]);
+    const parentBranch = branches.find((b) => b.id === input.branchId);
+    if (parentBranch) {
+      await upsertAutoSeoDescriptor(
+        buildSemesterSeoDefaults(
+          parentBranch,
+          {
+            id,
+            semesterNumber: semNum,
+            name: input.name.trim() || `Semester ${semNum}`,
+            isActive: input.isActive,
+          },
+          siteUrl
+        )
+      );
+    }
     return id;
   } catch (error) {
     handleFirestoreError(error, existingId ? OperationType.UPDATE : OperationType.CREATE, path);
@@ -433,6 +701,7 @@ export async function deleteSemesterSafe(semesterId: string): Promise<void> {
   }
   try {
     await deleteDoc(doc(db, 'semesters', semesterId));
+    await deleteSeoMetadataIfPresent('semester', semesterId);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `semesters/${semesterId}`);
   }
@@ -504,6 +773,31 @@ export async function saveSubject(
         updatedAt: serverTimestamp(),
       });
     }
+
+    const [branches, semesters, siteUrl] = await Promise.all([
+      getAllBranches(),
+      getAllSemesters(),
+      getConfiguredSiteUrl(),
+    ]);
+    const parentBranch = branches.find((b) => b.id === input.branchId);
+    const parentSem = semesters.find((s) => s.id === input.semesterId);
+    if (parentBranch && parentSem) {
+      await upsertAutoSeoDescriptor(
+        buildSubjectSeoDefaults(
+          parentBranch,
+          parentSem,
+          {
+            id,
+            name: input.name.trim(),
+            code: cleanCode,
+            slug: cleanSlug,
+            description: input.description.trim(),
+            isActive: input.isActive,
+          },
+          siteUrl
+        )
+      );
+    }
     return id;
   } catch (error) {
     handleFirestoreError(error, existingId ? OperationType.UPDATE : OperationType.CREATE, path);
@@ -517,6 +811,7 @@ export async function deleteSubjectSafe(subjectId: string): Promise<void> {
   }
   try {
     await deleteDoc(doc(db, 'subjects', subjectId));
+    await deleteSeoMetadataIfPresent('subject', subjectId);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `subjects/${subjectId}`);
   }
@@ -599,6 +894,34 @@ export async function savePaper(
         updatedAt: serverTimestamp(),
       });
     }
+
+    const [branches, semesters, subjects, siteUrl] = await Promise.all([
+      getAllBranches(),
+      getAllSemesters(),
+      getAllSubjects(),
+      getConfiguredSiteUrl(),
+    ]);
+    const parentBranch = branches.find((b) => b.id === input.branchId);
+    const parentSem = semesters.find((s) => s.id === input.semesterId);
+    const parentSubj = subjects.find((s) => s.id === input.subjectId);
+    if (parentBranch && parentSem && parentSubj) {
+      await upsertAutoSeoDescriptor(
+        buildPaperSeoDefaults(
+          parentBranch,
+          parentSem,
+          parentSubj,
+          {
+            id,
+            title: input.title.trim(),
+            examSession: input.examSession,
+            examYear: yearNum,
+            slug: paperSlug,
+            isActive: input.isActive,
+          },
+          siteUrl
+        )
+      );
+    }
     return id;
   } catch (error) {
     handleFirestoreError(error, existingId ? OperationType.UPDATE : OperationType.CREATE, path);
@@ -612,6 +935,7 @@ export async function deletePaperRecord(
 ): Promise<void> {
   try {
     await deleteDoc(doc(db, 'papers', paperId));
+    await deleteSeoMetadataIfPresent('paper', paperId);
     if (token && storagePath && storagePath.startsWith('/api/files/')) {
       await fetch('/api/admin/files', {
         method: 'DELETE',

@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, FileText, GitBranch, Layers, Megaphone } from 'lucide-react';
+import { ArrowRight, BookOpen, FileText, GitBranch, Globe, Layers, Megaphone } from 'lucide-react';
 import { AdSlot } from '../AdSlot';
 import type { Advertisement, Branch, Paper, Semester, Subject } from '../../types/academic';
 import { formatFileSize } from '../../utils/slugify';
@@ -10,6 +10,7 @@ export type AdminSection =
   | 'subjects'
   | 'papers'
   | 'ads'
+  | 'seo'
   | 'settings';
 
 interface AdminOverviewProps {
@@ -83,6 +84,12 @@ export function AdminOverview({
       section: 'ads',
       icon: Megaphone,
       superOnly: true,
+    },
+    {
+      title: 'SEO Management',
+      description: 'Edit titles, meta descriptions, canonical URLs, and preview Google search snippets.',
+      section: 'seo',
+      icon: Globe,
     },
   ];
 

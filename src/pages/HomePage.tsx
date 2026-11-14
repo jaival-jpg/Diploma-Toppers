@@ -7,7 +7,6 @@ import {
   FileText,
   RefreshCw,
 } from 'lucide-react';
-import heroBlueprintImg from '../assets/images/hero_engineering_blueprint_1794556857507.jpg';
 import { AdSlot } from '../components/AdSlot';
 import { Footer } from '../components/Footer';
 import { GlobalSearchBar } from '../components/GlobalSearchBar';
@@ -111,48 +110,35 @@ export function HomePage() {
         {/* Hero & Search */}
         <section className="border-b border-slate-100 bg-gradient-to-b from-[#F4F8FD] to-white py-12 sm:py-16 dark:border-slate-800/80 dark:from-slate-900/70 dark:to-[#0B1120]">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 items-stretch gap-10 lg:grid-cols-12">
-              <div className="flex flex-col justify-center lg:col-span-7">
-                <p className="text-sm font-semibold text-[#1769D2] dark:text-blue-400">
-                  Gujarat Technological University · Diploma Engineering
-                </p>
-                <h1 className="mt-2 text-balance text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl lg:text-5xl dark:text-white">
-                  GTU Diploma Old Question Papers
-                </h1>
-                <p className="mt-4 max-w-2xl text-base leading-relaxed text-[#666666] sm:text-lg dark:text-slate-300">
-                  Browse verified GTU Diploma Summer and Winter examination question papers organized cleanly by engineering branch, semester, and subject code.
-                </p>
+            <div className="flex flex-col justify-center">
+              <p className="text-sm font-semibold text-[#1769D2] dark:text-blue-400">
+                Gujarat Technological University · Diploma Engineering
+              </p>
+              <h1 className="mt-2 text-balance text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl lg:text-5xl dark:text-white">
+                GTU Diploma Old Question Papers
+              </h1>
+              <p className="mt-4 max-w-2xl text-base leading-relaxed text-[#666666] sm:text-lg dark:text-slate-300">
+                Browse verified GTU Diploma Summer and Winter examination question papers organized cleanly by engineering branch, semester, and subject code.
+              </p>
 
-                <div className="mt-7 max-w-2xl">
-                  <GlobalSearchBar />
-                </div>
-
-                <div className="mt-6 flex flex-wrap items-center gap-4">
-                  <a
-                    href="#branches"
-                    className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0D47A1]"
-                  >
-                    <span>Browse Branches</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </a>
-                  <a
-                    href="#gtu-updates"
-                    className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-[#202124] transition-colors hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    <span>Search GTU Syllabus</span>
-                  </a>
-                </div>
+              <div className="mt-7 max-w-2xl">
+                <GlobalSearchBar />
               </div>
 
-              <div className="lg:col-span-5">
-                <div className="relative h-full min-h-[240px] overflow-hidden rounded-2xl border border-slate-200 bg-[#F4F8FD] shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                  <img
-                    src={heroBlueprintImg}
-                    alt="Engineering blueprint illustration representing Computer, Civil, Electrical, and Mechanical Diploma Engineering"
-                    referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover"
-                  />
-                </div>
+              <div className="mt-6 flex flex-wrap items-center gap-4">
+                <a
+                  href="#branches"
+                  className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0D47A1]"
+                >
+                  <span>Browse Branches</span>
+                  <ArrowRight className="h-4 w-4" />
+                </a>
+                <a
+                  href="#gtu-updates"
+                  className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-[#202124] transition-colors hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <span>Search GTU Syllabus</span>
+                </a>
               </div>
             </div>
           </div>

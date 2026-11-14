@@ -130,19 +130,40 @@ async function firestoreRunActiveQuery(collectionName: string): Promise<Array<Re
 }
 
 async function firestoreListCollection(collectionName: string): Promise<Array<Record<string, unknown>>> {
+  const results: Array<Record<string, unknown>> = [];
+  const batchSize = 500;
+  let offset = 0;
   try {
-    const url = `${FIRESTORE_REST_BASE}/${encodeURIComponent(collectionName)}?pageSize=200&key=${encodeURIComponent(firebaseConfig.apiKey)}`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const json = (await res.json()) as {
-      documents?: Array<{ name?: string; fields?: Record<string, FirestoreValue> }>;
-    };
-    return (json.documents || []).map((d) => ({
-      id: d.name?.split('/').pop() || '',
-      ...decodeFirestoreFields(d.fields),
-    }));
+    while (true) {
+      const url = `${FIRESTORE_REST_BASE}:runQuery?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: collectionName }],
+            limit: batchSize,
+            offset,
+          },
+        }),
+      });
+      if (!res.ok) break;
+      const rows = (await res.json()) as Array<{
+        document?: { name?: string; fields?: Record<string, FirestoreValue> };
+      }>;
+      const docs = rows
+        .filter((r) => r.document?.fields)
+        .map((r) => ({
+          id: r.document!.name?.split('/').pop() || '',
+          ...decodeFirestoreFields(r.document!.fields),
+        }));
+      results.push(...docs);
+      if (docs.length < batchSize) break;
+      offset += docs.length;
+    }
+    return results;
   } catch {
-    return [];
+    return results;
   }
 }
 
@@ -217,9 +238,41 @@ const uploadBannerMulter = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
+function normalizeHttpOrigin(raw?: string): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed || trimmed.includes('MY_APP_URL') || !/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname) {
+      return `${parsed.protocol}//${parsed.host}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function sanitizeVerificationToken(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let token = raw.trim();
+  const metaMatch = token.match(/content=["']([^"']+)["']/i);
+  if (metaMatch?.[1]) {
+    token = metaMatch[1].trim();
+  }
+  if (!token || token === ADMIN_PASSWORD || !/^[a-zA-Z0-9_-]{8,128}$/.test(token)) {
+    return '';
+  }
+  return token;
+}
+
 function getCanonicalOrigin(req: Request): string {
-  const configured = (process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_URL || '').trim().replace(/\/+$/, '');
-  if (configured && !configured.includes('MY_APP_URL')) {
+  const configured =
+    normalizeHttpOrigin(process.env.NEXT_PUBLIC_SITE_URL) ||
+    normalizeHttpOrigin(process.env.APP_URL);
+  if (configured) {
     return configured;
   }
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
@@ -247,14 +300,14 @@ function escapeXml(str: string): string {
 
 async function resolveRouteSeo(pathname: string, origin: string) {
   const cleanPath = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
-  const canonicalUrl = `${origin}${cleanPath === '/' ? '' : cleanPath}`;
 
-  const [branches, semesters, subjects, papers, settingsList] = await Promise.all([
+  const [branches, semesters, subjects, papers, settingsList, seoList] = await Promise.all([
     firestoreRunActiveQuery('branches'),
     firestoreRunActiveQuery('semesters'),
     firestoreRunActiveQuery('subjects'),
     firestoreRunActiveQuery('papers'),
     firestoreListCollection('website_settings'),
+    firestoreListCollection('seo_metadata'),
   ]);
 
   const settingsMap: Record<string, string> = {};
@@ -264,19 +317,35 @@ async function resolveRouteSeo(pathname: string, origin: string) {
     }
   }
 
-  const effectiveOrigin = settingsMap.siteUrl?.trim()
-    ? settingsMap.siteUrl.trim().replace(/\/+$/, '')
-    : origin;
-  const canonical = `${effectiveOrigin}${cleanPath === '/' ? '' : cleanPath}`;
-  const googleVerification =
-    settingsMap.googleVerification?.trim() || process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || '';
+  const seoById = new Map<string, Record<string, unknown>>();
+  const seoByPath = new Map<string, Record<string, unknown>>();
+  for (const item of seoList) {
+    if (item.id) seoById.set(String(item.id), item);
+    if (typeof item.pagePath === 'string' && item.pagePath) {
+      const norm = item.pagePath === '/' ? '/' : item.pagePath.replace(/\/+$/, '');
+      seoByPath.set(norm, item);
+    }
+  }
+
+  const effectiveOrigin = normalizeHttpOrigin(settingsMap.siteUrl) || origin;
+  const canonical = `${effectiveOrigin}${cleanPath === '/' ? '/' : cleanPath}`;
+  const googleVerification = sanitizeVerificationToken(
+    settingsMap.googleVerification?.trim() || process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
+  );
 
   const defaultSeo = {
     title: 'GTU Diploma Old Question Papers | DiplomaToppers',
     description:
+      settingsMap.siteDescription?.trim() ||
       'Download GTU Diploma Engineering previous year Summer and Winter question papers organized by branch, semester, and subject on DiplomaToppers.',
+    ogTitle: 'GTU Diploma Old Question Papers | DiplomaToppers',
+    ogDescription:
+      settingsMap.siteDescription?.trim() ||
+      'Download GTU Diploma Engineering previous year Summer and Winter question papers organized by branch, semester, and subject on DiplomaToppers.',
+    ogImageUrl: '',
     canonical,
     noindex: cleanPath.startsWith('/admin'),
+    robots: cleanPath.startsWith('/admin') ? 'noindex, nofollow' : 'index, follow',
     googleVerification,
     jsonLd: [
       {
@@ -300,33 +369,69 @@ async function resolveRouteSeo(pathname: string, origin: string) {
     ssrFallbackHtml: `<h1>DiplomaToppers — GTU Diploma Question Papers</h1><p>Explore GTU Diploma Engineering branches, semesters, subjects, and Summer/Winter PDF papers.</p>`,
   };
 
+  const applySeoOverride = (seoDocId: string, pagePath: string, target: typeof defaultSeo) => {
+    const rec = seoById.get(seoDocId) || seoByPath.get(pagePath);
+    if (!rec) {
+      target.ogTitle = target.title;
+      target.ogDescription = target.description;
+      return target;
+    }
+    if (typeof rec.seoTitle === 'string' && rec.seoTitle.trim()) {
+      target.title = rec.seoTitle.trim();
+    }
+    if (typeof rec.metaDescription === 'string' && rec.metaDescription.trim()) {
+      target.description = rec.metaDescription.trim();
+    }
+    if (typeof rec.canonicalUrl === 'string' && rec.canonicalUrl.trim()) {
+      target.canonical = rec.canonicalUrl.trim();
+    }
+    target.ogTitle =
+      typeof rec.ogTitle === 'string' && rec.ogTitle.trim() ? rec.ogTitle.trim() : target.title;
+    target.ogDescription =
+      typeof rec.ogDescription === 'string' && rec.ogDescription.trim()
+        ? rec.ogDescription.trim()
+        : target.description;
+    target.ogImageUrl =
+      typeof rec.ogImageUrl === 'string' && rec.ogImageUrl.trim() ? rec.ogImageUrl.trim() : '';
+    const rIndex = rec.robotsIndex !== false;
+    const rFollow = rec.robotsFollow !== false;
+    target.noindex = !rIndex;
+    target.robots = `${rIndex ? 'index' : 'noindex'}, ${rFollow ? 'follow' : 'nofollow'}`;
+    return target;
+  };
+
   if (cleanPath === '/' || cleanPath === '') {
     const branchLinks = branches
       .map((b) => `<li><a href="/${escapeHtml(String(b.slug))}">${escapeHtml(String(b.name))} (Code ${escapeHtml(String(b.code))})</a></li>`)
       .join('');
     defaultSeo.ssrFallbackHtml = `<h1>Select Your Engineering Branch | DiplomaToppers</h1><ul>${branchLinks}</ul>`;
-    return defaultSeo;
+    return applySeoOverride('seo-home-home', '/', defaultSeo);
   }
 
-  const staticTitles: Record<string, { title: string; desc: string }> = {
+  const staticTitles: Record<string, { id: string; title: string; desc: string }> = {
     '/about': {
+      id: 'about',
       title: 'About Us | DiplomaToppers',
       desc: 'Learn how DiplomaToppers helps GTU Diploma Engineering students access verified previous examination question papers.',
     },
     '/contact': {
+      id: 'contact',
       title: 'Contact Us | DiplomaToppers',
       desc: 'Contact DiplomaToppers for paper requests, academic corrections, or support.',
     },
     '/privacy-policy': {
+      id: 'privacy-policy',
       title: 'Privacy Policy | DiplomaToppers',
       desc: 'Read the DiplomaToppers privacy policy and data protection practices.',
     },
     '/terms-and-conditions': {
+      id: 'terms-and-conditions',
       title: 'Terms and Conditions | DiplomaToppers',
       desc: 'Review the terms and conditions for using GTU Diploma question papers on DiplomaToppers.',
     },
     '/disclaimer': {
-      title: 'Disclaimer | DiplomaToppers',
+      id: 'disclaimer',
+      title: 'Academic Disclaimer | DiplomaToppers',
       desc: 'Academic disclaimer for DiplomaToppers GTU Diploma Engineering resources.',
     },
   };
@@ -335,23 +440,30 @@ async function resolveRouteSeo(pathname: string, origin: string) {
     defaultSeo.title = staticTitles[cleanPath].title;
     defaultSeo.description = staticTitles[cleanPath].desc;
     defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(staticTitles[cleanPath].title)}</h1><p>${escapeHtml(staticTitles[cleanPath].desc)}</p>`;
-    return defaultSeo;
+    return applySeoOverride(`seo-static-${staticTitles[cleanPath].id}`, cleanPath, defaultSeo);
   }
 
   if (cleanPath.startsWith('/admin')) {
     defaultSeo.title = 'Admin Portal | DiplomaToppers';
     defaultSeo.description = 'Administrator authentication and academic content management for DiplomaToppers.';
+    defaultSeo.ogTitle = defaultSeo.title;
+    defaultSeo.ogDescription = defaultSeo.description;
     defaultSeo.noindex = true;
+    defaultSeo.robots = 'noindex, nofollow';
     return defaultSeo;
   }
 
   const segments = cleanPath.split('/').filter(Boolean);
   const branchSlug = segments[0];
   const branch = branches.find((b) => b.slug === branchSlug);
-  if (!branch) return defaultSeo;
+  if (!branch) {
+    defaultSeo.noindex = true;
+    defaultSeo.robots = 'noindex, nofollow';
+    return defaultSeo;
+  }
 
   const breadcrumbs: Array<{ name: string; item: string }> = [
-    { name: 'Home', item: effectiveOrigin },
+    { name: 'Home', item: `${effectiveOrigin}/` },
     { name: String(branch.name), item: `${effectiveOrigin}/${branch.slug}` },
   ];
 
@@ -359,7 +471,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
     defaultSeo.title = `GTU ${branch.name} Old Papers | DiplomaToppers`;
     defaultSeo.description =
       String(branch.description || '') ||
-      `Browse GTU ${branch.name} (Code ${branch.code}) semesters 1 to 6 previous examination question papers.`;
+      `Download GTU ${branch.name} (Code ${branch.code}) Semester 1 to 6 previous year Summer and Winter question papers on DiplomaToppers.`;
     defaultSeo.jsonLd.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
@@ -371,13 +483,17 @@ async function resolveRouteSeo(pathname: string, origin: string) {
       })),
     });
     defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} (Code ${escapeHtml(String(branch.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
-    return defaultSeo;
+    return applySeoOverride(`seo-branch-${String(branch.id)}`, cleanPath, defaultSeo);
   }
 
   const semMatch = segments[1].match(/^semester-(\d+)$/);
   const semNum = semMatch ? Number(semMatch[1]) : 0;
   const semester = semesters.find((s) => s.branchId === branch.id && s.semesterNumber === semNum);
-  if (!semester) return defaultSeo;
+  if (!semester) {
+    defaultSeo.noindex = true;
+    defaultSeo.robots = 'noindex, nofollow';
+    return defaultSeo;
+  }
 
   breadcrumbs.push({
     name: String(semester.name),
@@ -386,7 +502,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
 
   if (segments.length === 2) {
     defaultSeo.title = `GTU ${String(branch.name).replace(/^Diploma\s+/i, '')} Semester ${semNum} Papers | DiplomaToppers`;
-    defaultSeo.description = `Download GTU ${branch.name} Semester ${semNum} subject-wise Summer and Winter old question papers.`;
+    defaultSeo.description = `Browse and download GTU ${branch.name} Semester ${semNum} subject-wise Summer and Winter diploma old question papers.`;
     defaultSeo.jsonLd.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
@@ -405,14 +521,18 @@ async function resolveRouteSeo(pathname: string, origin: string) {
       )
       .join('');
     defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} — Semester ${semNum}</h1><ul>${subjLinks}</ul>`;
-    return defaultSeo;
+    return applySeoOverride(`seo-semester-${String(semester.id)}`, cleanPath, defaultSeo);
   }
 
   const subjectSlug = segments[2];
   const subject = subjects.find(
     (s) => s.branchId === branch.id && s.semesterId === semester.id && s.slug === subjectSlug
   );
-  if (!subject) return defaultSeo;
+  if (!subject) {
+    defaultSeo.noindex = true;
+    defaultSeo.robots = 'noindex, nofollow';
+    return defaultSeo;
+  }
 
   breadcrumbs.push({
     name: String(subject.name),
@@ -420,8 +540,10 @@ async function resolveRouteSeo(pathname: string, origin: string) {
   });
 
   if (segments.length === 3) {
-    defaultSeo.title = `${subject.name} (${subject.code}) GTU Old Papers | DiplomaToppers`;
-    defaultSeo.description = `Download ${subject.name} (${subject.code}) GTU Diploma Summer & Winter examination question papers PDF for ${branch.name} Semester ${semNum}.`;
+    defaultSeo.title = `GTU ${subject.name} ${subject.code} Old Question Papers | DiplomaToppers`;
+    defaultSeo.description =
+      String(subject.description || '') ||
+      `Download GTU ${subject.name} (${subject.code}) Summer and Winter diploma old question papers PDF for ${branch.name} Semester ${semNum}.`;
     defaultSeo.jsonLd.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
@@ -433,20 +555,24 @@ async function resolveRouteSeo(pathname: string, origin: string) {
       })),
     });
     defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(subject.name))} (${escapeHtml(String(subject.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
-    return defaultSeo;
+    return applySeoOverride(`seo-subject-${String(subject.id)}`, cleanPath, defaultSeo);
   }
 
   const paperSlug = segments[3];
   const paper = papers.find((p) => p.subjectId === subject.id && p.slug === paperSlug);
-  if (!paper) return defaultSeo;
+  if (!paper) {
+    defaultSeo.noindex = true;
+    defaultSeo.robots = 'noindex, nofollow';
+    return defaultSeo;
+  }
 
   breadcrumbs.push({
     name: `${paper.examSession} ${paper.examYear}`,
     item: `${effectiveOrigin}/${branch.slug}/semester-${semNum}/${subject.slug}/${paper.slug}`,
   });
 
-  defaultSeo.title = `${subject.name} (${subject.code}) GTU ${paper.examSession} ${paper.examYear} Question Paper PDF | DiplomaToppers`;
-  defaultSeo.description = `View and download ${subject.name} (${subject.code}) GTU ${paper.examSession} ${paper.examYear} Diploma question paper PDF for ${branch.name} Semester ${semNum}.`;
+  defaultSeo.title = `GTU ${subject.name} ${paper.examSession} ${paper.examYear} Question Paper PDF | DiplomaToppers`;
+  defaultSeo.description = `View and download GTU ${subject.name} (${subject.code}) ${paper.examSession} ${paper.examYear} diploma question paper PDF for ${branch.name} Semester ${semNum}.`;
   defaultSeo.jsonLd.push(
     {
       '@context': 'https://schema.org',
@@ -468,7 +594,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
     }
   );
   defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(paper.title))}</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
-  return defaultSeo;
+  return applySeoOverride(`seo-paper-${String(paper.id)}`, cleanPath, defaultSeo);
 }
 
 async function startServer() {
@@ -783,15 +909,19 @@ async function startServer() {
 
   // ---- Technical SEO Endpoints ----
 
-  app.get('/robots.txt', (req, res) => {
+  app.get('/robots.txt', async (req, res) => {
     const origin = getCanonicalOrigin(req);
+    const settingsList = await firestoreListCollection('website_settings');
+    const siteUrlSetting = settingsList.find((s) => s.settingKey === 'siteUrl')?.settingValue;
+    const base =
+      normalizeHttpOrigin(typeof siteUrlSetting === 'string' ? siteUrlSetting : undefined) || origin;
     const content = [
       'User-agent: *',
       'Allow: /',
       'Disallow: /admin/',
       'Disallow: /api/admin/',
       '',
-      `Sitemap: ${origin}/sitemap.xml`,
+      `Sitemap: ${base}/sitemap.xml`,
     ].join('\n');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send(content);
@@ -799,38 +929,76 @@ async function startServer() {
 
   app.get('/sitemap.xml', async (req, res) => {
     const origin = getCanonicalOrigin(req);
-    const [branches, semesters, subjects, papers, settingsList] = await Promise.all([
+    const [branches, semesters, subjects, papers, settingsList, seoList] = await Promise.all([
       firestoreRunActiveQuery('branches'),
       firestoreRunActiveQuery('semesters'),
       firestoreRunActiveQuery('subjects'),
       firestoreRunActiveQuery('papers'),
       firestoreListCollection('website_settings'),
+      firestoreListCollection('seo_metadata'),
     ]);
 
     const siteUrlSetting = settingsList.find((s) => s.settingKey === 'siteUrl')?.settingValue;
     const base =
-      typeof siteUrlSetting === 'string' && siteUrlSetting.trim()
-        ? siteUrlSetting.trim().replace(/\/+$/, '')
-        : origin;
+      normalizeHttpOrigin(typeof siteUrlSetting === 'string' ? siteUrlSetting : undefined) || origin;
 
+    const seoById = new Map(seoList.map((s) => [String(s.id), s]));
     const today = new Date().toISOString().split('T')[0];
-    const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [
-      { loc: `${base}/`, lastmod: today, changefreq: 'daily', priority: '1.0' },
-      { loc: `${base}/about`, lastmod: today, changefreq: 'monthly', priority: '0.5' },
-      { loc: `${base}/contact`, lastmod: today, changefreq: 'monthly', priority: '0.5' },
-      { loc: `${base}/privacy-policy`, lastmod: today, changefreq: 'yearly', priority: '0.3' },
-      { loc: `${base}/terms-and-conditions`, lastmod: today, changefreq: 'yearly', priority: '0.3' },
-      { loc: `${base}/disclaimer`, lastmod: today, changefreq: 'yearly', priority: '0.3' },
+
+    const isIndexable = (seoId: string): boolean => {
+      const rec = seoById.get(seoId);
+      return !(rec && rec.robotsIndex === false);
+    };
+
+    const pickLastMod = (seoId: string, entityUpdated?: unknown): string => {
+      const rec = seoById.get(seoId);
+      const candidates = [rec?.updatedAt, entityUpdated]
+        .map((v) => (typeof v === 'string' && v ? v.split('T')[0] : ''))
+        .filter(Boolean)
+        .sort();
+      return candidates.length > 0 ? candidates[candidates.length - 1] : today;
+    };
+
+    const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [];
+
+    if (isIndexable('seo-home-home')) {
+      urls.push({
+        loc: `${base}/`,
+        lastmod: pickLastMod('seo-home-home'),
+        changefreq: 'daily',
+        priority: '1.0',
+      });
+    }
+
+    const staticEntries = [
+      { id: 'about', path: '/about', freq: 'monthly', prio: '0.5' },
+      { id: 'contact', path: '/contact', freq: 'monthly', prio: '0.5' },
+      { id: 'privacy-policy', path: '/privacy-policy', freq: 'yearly', prio: '0.3' },
+      { id: 'terms-and-conditions', path: '/terms-and-conditions', freq: 'yearly', prio: '0.3' },
+      { id: 'disclaimer', path: '/disclaimer', freq: 'yearly', prio: '0.3' },
     ];
+    for (const st of staticEntries) {
+      const seoId = `seo-static-${st.id}`;
+      if (isIndexable(seoId)) {
+        urls.push({
+          loc: `${base}${st.path}`,
+          lastmod: pickLastMod(seoId),
+          changefreq: st.freq,
+          priority: st.prio,
+        });
+      }
+    }
 
     const branchById = new Map(branches.map((b) => [String(b.id), b]));
     const semById = new Map(semesters.map((s) => [String(s.id), s]));
     const subjById = new Map(subjects.map((s) => [String(s.id), s]));
 
     for (const b of branches) {
+      const seoId = `seo-branch-${String(b.id)}`;
+      if (!isIndexable(seoId)) continue;
       urls.push({
         loc: `${base}/${b.slug}`,
-        lastmod: String(b.updatedAt || today).split('T')[0],
+        lastmod: pickLastMod(seoId, b.updatedAt),
         changefreq: 'weekly',
         priority: '0.9',
       });
@@ -838,10 +1006,11 @@ async function startServer() {
 
     for (const sem of semesters) {
       const b = branchById.get(String(sem.branchId));
-      if (!b) continue;
+      const seoId = `seo-semester-${String(sem.id)}`;
+      if (!b || !isIndexable(seoId)) continue;
       urls.push({
         loc: `${base}/${b.slug}/semester-${sem.semesterNumber}`,
-        lastmod: String(sem.updatedAt || today).split('T')[0],
+        lastmod: pickLastMod(seoId, sem.updatedAt),
         changefreq: 'weekly',
         priority: '0.8',
       });
@@ -850,10 +1019,11 @@ async function startServer() {
     for (const subj of subjects) {
       const b = branchById.get(String(subj.branchId));
       const sem = semById.get(String(subj.semesterId));
-      if (!b || !sem) continue;
+      const seoId = `seo-subject-${String(subj.id)}`;
+      if (!b || !sem || !isIndexable(seoId)) continue;
       urls.push({
         loc: `${base}/${b.slug}/semester-${sem.semesterNumber}/${subj.slug}`,
-        lastmod: String(subj.updatedAt || today).split('T')[0],
+        lastmod: pickLastMod(seoId, subj.updatedAt),
         changefreq: 'weekly',
         priority: '0.8',
       });
@@ -863,10 +1033,11 @@ async function startServer() {
       const subj = subjById.get(String(pap.subjectId));
       const b = branchById.get(String(pap.branchId));
       const sem = semById.get(String(pap.semesterId));
-      if (!subj || !b || !sem) continue;
+      const seoId = `seo-paper-${String(pap.id)}`;
+      if (!subj || !b || !sem || !isIndexable(seoId)) continue;
       urls.push({
         loc: `${base}/${b.slug}/semester-${sem.semesterNumber}/${subj.slug}/${pap.slug}`,
-        lastmod: String(pap.updatedAt || today).split('T')[0],
+        lastmod: pickLastMod(seoId, pap.updatedAt),
         changefreq: 'monthly',
         priority: '0.7',
       });
@@ -922,7 +1093,9 @@ async function startServer() {
       const metaInject = [
         `<link rel="canonical" href="${escapeHtml(seo.canonical)}" />`,
         `<meta property="og:url" content="${escapeHtml(seo.canonical)}" />`,
-        seo.noindex ? '<meta name="robots" content="noindex, nofollow" />' : '<meta name="robots" content="index, follow" />',
+        seo.ogImageUrl ? `<meta property="og:image" content="${escapeHtml(seo.ogImageUrl)}" />` : '',
+        seo.ogImageUrl ? `<meta name="twitter:image" content="${escapeHtml(seo.ogImageUrl)}" />` : '',
+        `<meta name="robots" content="${escapeHtml(seo.robots)}" />`,
         seo.googleVerification
           ? `<meta name="google-site-verification" content="${escapeHtml(seo.googleVerification)}" />`
           : '',
@@ -941,19 +1114,19 @@ async function startServer() {
         )
         .replace(
           /<meta\s+property="og:title"\s+content="[^"]*"\s*\/?>/,
-          `<meta property="og:title" content="${escapeHtml(seo.title)}" />`
+          `<meta property="og:title" content="${escapeHtml(seo.ogTitle)}" />`
         )
         .replace(
           /<meta\s+property="og:description"\s+content="[^"]*"\s*\/?>/,
-          `<meta property="og:description" content="${escapeHtml(seo.description)}" />`
+          `<meta property="og:description" content="${escapeHtml(seo.ogDescription)}" />`
         )
         .replace(
           /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/?>/,
-          `<meta name="twitter:title" content="${escapeHtml(seo.title)}" />`
+          `<meta name="twitter:title" content="${escapeHtml(seo.ogTitle)}" />`
         )
         .replace(
           /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/?>/,
-          `<meta name="twitter:description" content="${escapeHtml(seo.description)}" />`
+          `<meta name="twitter:description" content="${escapeHtml(seo.ogDescription)}" />`
         )
         .replace('<!-- SEO_META_INJECT -->', metaInject)
         .replace('<!-- SSR_SEO_FALLBACK -->', `<noscript><main>${seo.ssrFallbackHtml}</main></noscript>`);

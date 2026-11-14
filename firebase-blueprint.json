@@ -152,6 +152,28 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["email", "role", "isActive", "invitedByUid", "createdAt", "updatedAt"]
+    },
+    "SeoMetadata": {
+      "title": "SeoMetadata",
+      "description": "Per-page SEO metadata, Open Graph tags, canonical URL, and robots directives",
+      "type": "object",
+      "properties": {
+        "pageType": { "type": "string", "enum": ["home", "branch", "semester", "subject", "paper", "static"] },
+        "pageReferenceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "pageName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "pagePath": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "seoTitle": { "type": "string", "maxLength": 200 },
+        "metaDescription": { "type": "string", "maxLength": 400 },
+        "canonicalUrl": { "type": "string", "maxLength": 500 },
+        "ogTitle": { "type": "string", "maxLength": 200 },
+        "ogDescription": { "type": "string", "maxLength": 400 },
+        "ogImageUrl": { "type": "string", "maxLength": 500 },
+        "robotsIndex": { "type": "boolean" },
+        "robotsFollow": { "type": "boolean" },
+        "isCustomized": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["pageType", "pageReferenceId", "pageName", "pagePath", "seoTitle", "metaDescription", "canonicalUrl", "ogTitle", "ogDescription", "ogImageUrl", "robotsIndex", "robotsFollow", "isCustomized", "updatedAt"]
     }
   },
   "firestore": {
@@ -186,6 +208,10 @@
     "/admin_invites/{inviteId}": {
       "schema": { "$ref": "#/entities/AdminInvite" },
       "description": "Pending administrator email invitations"
+    },
+    "/seo_metadata/{seoId}": {
+      "schema": { "$ref": "#/entities/SeoMetadata" },
+      "description": "Database-driven per-page SEO metadata, canonical URLs, and indexing directives"
     }
   }
 }
