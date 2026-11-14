@@ -1,7 +1,11 @@
 import { useMemo, useState } from 'react';
 import { CheckCircle2, Edit2, ExternalLink, FileText, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { deletePaperRecord, savePaper } from '../../services/firestoreCatalog';
+import {
+  deletePaperRecord,
+  savePaper,
+  savePaperAcrossAllBranches,
+} from '../../services/firestoreCatalog';
 import type { Branch, ExamSession, Paper, Semester, Subject } from '../../types/academic';
 import { formatFileSize } from '../../utils/slugify';
 
@@ -15,6 +19,13 @@ interface PaperManagerProps {
 }
 
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
+const ALL_BRANCHES_VALUE = '__ALL_BRANCHES__';
+
+interface AllBranchesSubjectOption {
+  code: string;
+  representative: Subject;
+  matchedBranchIds: string[];
+}
 
 export function PaperManager({
   branches,
@@ -30,23 +41,74 @@ export function PaperManager({
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
 
   const [branchId, setBranchId] = useState<string>(branches[0]?.id || '');
+  const isAllBranches = !editingPaper && branchId === ALL_BRANCHES_VALUE;
+
   const branchSemesters = useMemo(
     () => semesters.filter((s) => s.branchId === branchId).sort((a, b) => a.semesterNumber - b.semesterNumber),
     [semesters, branchId]
   );
+  const availableSemesterNumbers = useMemo(
+    () => Array.from(new Set(semesters.map((s) => s.semesterNumber))).sort((a, b) => a - b),
+    [semesters]
+  );
+
   const [semesterId, setSemesterId] = useState<string>('');
+  const [semesterNumber, setSemesterNumber] = useState<number>(availableSemesterNumbers[0] || 1);
   const effectiveSemesterId = branchSemesters.some((s) => s.id === semesterId)
     ? semesterId
     : branchSemesters[0]?.id || '';
+  const effectiveSemesterNumber = availableSemesterNumbers.includes(semesterNumber)
+    ? semesterNumber
+    : availableSemesterNumbers[0] || 1;
 
   const filteredSubjectsForSelect = useMemo(
     () => subjects.filter((s) => s.branchId === branchId && s.semesterId === effectiveSemesterId),
     [subjects, branchId, effectiveSemesterId]
   );
+
+  const allBranchesSubjectOptions = useMemo<AllBranchesSubjectOption[]>(() => {
+    const matchingSemIds = new Set(
+      semesters.filter((s) => s.semesterNumber === effectiveSemesterNumber).map((s) => s.id)
+    );
+    const byCode = new Map<string, { representative: Subject; branchIds: Set<string> }>();
+    for (const s of subjects) {
+      if (!matchingSemIds.has(s.semesterId)) continue;
+      const key = s.code.trim().toUpperCase();
+      const existing = byCode.get(key);
+      if (!existing) {
+        byCode.set(key, { representative: s, branchIds: new Set([s.branchId]) });
+      } else {
+        existing.branchIds.add(s.branchId);
+      }
+    }
+    return Array.from(byCode.entries())
+      .map(([codeKey, val]) => ({
+        code: codeKey,
+        representative: val.representative,
+        matchedBranchIds: Array.from(val.branchIds),
+      }))
+      .sort((a, b) => a.representative.name.localeCompare(b.representative.name));
+  }, [semesters, subjects, effectiveSemesterNumber]);
+
   const [subjectId, setSubjectId] = useState<string>('');
+  const [allBranchesSubjectCode, setAllBranchesSubjectCode] = useState<string>('');
+  const [createMissingSubjects, setCreateMissingSubjects] = useState<boolean>(true);
+
   const effectiveSubjectId = filteredSubjectsForSelect.some((s) => s.id === subjectId)
     ? subjectId
     : filteredSubjectsForSelect[0]?.id || '';
+  const effectiveAllBranchOption =
+    allBranchesSubjectOptions.find((o) => o.code === allBranchesSubjectCode) ||
+    allBranchesSubjectOptions[0] ||
+    null;
+
+  const branchesWithSelectedSemesterCount = useMemo(
+    () =>
+      branches.filter((b) =>
+        semesters.some((s) => s.branchId === b.id && s.semesterNumber === effectiveSemesterNumber)
+      ).length,
+    [branches, semesters, effectiveSemesterNumber]
+  );
 
   const [examSession, setExamSession] = useState<ExamSession>('Summer');
   const [examYear, setExamYear] = useState<number>(2025);
@@ -61,27 +123,34 @@ export function PaperManager({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Paper | null>(null);
 
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
   const branchMap = new Map(branches.map((b) => [b.id, b]));
   const semesterMap = new Map(semesters.map((s) => [s.id, s]));
 
-  const autoFillTitle = (subjId: string, sess: ExamSession, yr: number) => {
-    const s = subjectMap.get(subjId);
+  const autoFillTitleFromSubject = (s: Subject | undefined, sess: ExamSession, yr: number) => {
     if (s) {
       setTitle(`${s.name} (${s.code}) - GTU ${sess} ${yr}`);
     }
   };
 
+  const autoFillTitle = (subjId: string, sess: ExamSession, yr: number) => {
+    autoFillTitleFromSubject(subjectMap.get(subjId), sess, yr);
+  };
+
   const openCreate = () => {
     const bId = branches[0]?.id || '';
-    const sem = semesters.find((s) => s.branchId === bId)?.id || '';
-    const subj = subjects.find((s) => s.branchId === bId && s.semesterId === sem);
+    const sem = semesters.find((s) => s.branchId === bId);
+    const subj = subjects.find((s) => s.branchId === bId && s.semesterId === (sem?.id || ''));
     setEditingPaper(null);
     setBranchId(bId);
-    setSemesterId(sem);
+    setSemesterId(sem?.id || '');
+    setSemesterNumber(sem?.semesterNumber || availableSemesterNumbers[0] || 1);
     setSubjectId(subj?.id || '');
+    setAllBranchesSubjectCode('');
+    setCreateMissingSubjects(true);
     setExamSession('Summer');
     setExamYear(2025);
     setTitle(subj ? `${subj.name} (${subj.code}) - GTU Summer 2025` : '');
@@ -92,6 +161,7 @@ export function PaperManager({
     setUploadStatus(null);
     setIsActive(true);
     setError(null);
+    setSuccessMessage(null);
     setShowForm(true);
   };
 
@@ -110,6 +180,7 @@ export function PaperManager({
     setUploadStatus(null);
     setIsActive(p.isActive);
     setError(null);
+    setSuccessMessage(null);
     setShowForm(true);
   };
 
@@ -185,7 +256,14 @@ export function PaperManager({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!effectiveSubjectId) {
+    if (isAllBranches) {
+      if (!effectiveAllBranchOption) {
+        setError(
+          `No subjects exist for Semester ${effectiveSemesterNumber} yet. Create a subject under Manage Subjects first.`
+        );
+        return;
+      }
+    } else if (!effectiveSubjectId) {
       setError('Please select a subject first (create a subject under Manage Subjects if none exist).');
       return;
     }
@@ -196,12 +274,17 @@ export function PaperManager({
 
     setSaving(true);
     setError(null);
+    setSuccessMessage(null);
     try {
-      await savePaper(
-        {
-          subjectId: effectiveSubjectId,
-          branchId,
-          semesterId: effectiveSemesterId,
+      if (isAllBranches && effectiveAllBranchOption) {
+        const rep = effectiveAllBranchOption.representative;
+        const res = await savePaperAcrossAllBranches({
+          semesterNumber: effectiveSemesterNumber,
+          subjectCode: rep.code,
+          subjectName: rep.name,
+          subjectSlug: rep.slug,
+          subjectDescription: rep.description,
+          createMissingSubjects,
           title,
           examSession,
           examYear,
@@ -209,9 +292,36 @@ export function PaperManager({
           originalFilename,
           fileSize,
           isActive,
-        },
-        editingPaper?.id
-      );
+        });
+        const extras: string[] = [];
+        if (res.createdSubjectsCount > 0) {
+          extras.push(`auto-created subject in ${res.createdSubjectsCount} branch(es)`);
+        }
+        if (res.skippedBranches.length > 0) {
+          extras.push(`skipped: ${res.skippedBranches.join(', ')}`);
+        }
+        const suffix = extras.length > 0 ? ` (${extras.join('; ')})` : '';
+        setSuccessMessage(
+          `Question paper published to ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'}${suffix}.`
+        );
+      } else {
+        await savePaper(
+          {
+            subjectId: effectiveSubjectId,
+            branchId,
+            semesterId: effectiveSemesterId,
+            title,
+            examSession,
+            examYear,
+            pdfStoragePath,
+            originalFilename,
+            fileSize,
+            isActive,
+          },
+          editingPaper?.id
+        );
+        setSuccessMessage(editingPaper ? 'Question paper updated successfully.' : 'Question paper published successfully.');
+      }
       setShowForm(false);
       await onRefresh();
     } catch (err) {
@@ -223,6 +333,7 @@ export function PaperManager({
 
   const handleDelete = async (p: Paper) => {
     setError(null);
+    setSuccessMessage(null);
     try {
       const token = await getIdToken();
       await deletePaperRecord(p.id, token, p.pdfStoragePath);
@@ -240,7 +351,7 @@ export function PaperManager({
         <div>
           <h2 className="text-xl font-bold text-[#202124] dark:text-white">Manage Question Papers</h2>
           <p className="text-sm text-[#666666] dark:text-slate-400">
-            Upload Summer and Winter GTU examination PDFs, replace files, or update paper metadata.
+            Upload Summer and Winter GTU examination PDFs to a single branch or across all branches at once.
           </p>
         </div>
         <button
@@ -266,6 +377,13 @@ export function PaperManager({
         </div>
       )}
 
+      {successMessage && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>{successMessage}</span>
+        </div>
+      )}
+
       {showForm && (
         <form
           onSubmit={(e) => void handleSubmit(e)}
@@ -284,13 +402,34 @@ export function PaperManager({
                 onChange={(e) => {
                   const bId = e.target.value;
                   setBranchId(bId);
-                  const firstSem = semesters.find((s) => s.branchId === bId)?.id || '';
-                  setSemesterId(firstSem);
-                  const firstSubj = subjects.find((s) => s.branchId === bId && s.semesterId === firstSem)?.id || '';
-                  setSubjectId(firstSubj);
+                  if (bId === ALL_BRANCHES_VALUE) {
+                    const semNum = availableSemesterNumbers[0] || 1;
+                    setSemesterNumber(semNum);
+                    const semIds = new Set(
+                      semesters.filter((s) => s.semesterNumber === semNum).map((s) => s.id)
+                    );
+                    const firstSubj = subjects.find((s) => semIds.has(s.semesterId));
+                    setAllBranchesSubjectCode(firstSubj ? firstSubj.code.trim().toUpperCase() : '');
+                    if (!editingPaper && firstSubj) {
+                      autoFillTitleFromSubject(firstSubj, examSession, examYear);
+                    }
+                  } else {
+                    const firstSem = semesters.find((s) => s.branchId === bId)?.id || '';
+                    setSemesterId(firstSem);
+                    const firstSubj = subjects.find((s) => s.branchId === bId && s.semesterId === firstSem);
+                    setSubjectId(firstSubj?.id || '');
+                    if (!editingPaper && firstSubj) {
+                      autoFillTitleFromSubject(firstSubj, examSession, examYear);
+                    }
+                  }
                 }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
               >
+                {!editingPaper && (
+                  <option value={ALL_BRANCHES_VALUE}>
+                    All Branches ({branches.length} branches)
+                  </option>
+                )}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
@@ -301,48 +440,134 @@ export function PaperManager({
 
             <div>
               <label className="mb-1 block text-xs font-semibold">2. Select Semester</label>
-              <select
-                required
-                value={effectiveSemesterId}
-                onChange={(e) => {
-                  const sId = e.target.value;
-                  setSemesterId(sId);
-                  const firstSubj = subjects.find((s) => s.branchId === branchId && s.semesterId === sId)?.id || '';
-                  setSubjectId(firstSubj);
-                }}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-              >
-                {branchSemesters.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              {isAllBranches ? (
+                <select
+                  required
+                  value={effectiveSemesterNumber}
+                  onChange={(e) => {
+                    const nextNum = Number(e.target.value);
+                    setSemesterNumber(nextNum);
+                    const semIds = new Set(
+                      semesters.filter((s) => s.semesterNumber === nextNum).map((s) => s.id)
+                    );
+                    const firstSubj = subjects.find((s) => semIds.has(s.semesterId));
+                    setAllBranchesSubjectCode(firstSubj ? firstSubj.code.trim().toUpperCase() : '');
+                    if (!editingPaper && firstSubj) {
+                      autoFillTitleFromSubject(firstSubj, examSession, examYear);
+                    }
+                  }}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {availableSemesterNumbers.map((num) => (
+                    <option key={num} value={num}>
+                      Semester {num}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  required
+                  value={effectiveSemesterId}
+                  onChange={(e) => {
+                    const sId = e.target.value;
+                    setSemesterId(sId);
+                    const firstSubj = subjects.find((s) => s.branchId === branchId && s.semesterId === sId);
+                    setSubjectId(firstSubj?.id || '');
+                    if (!editingPaper && firstSubj) {
+                      autoFillTitleFromSubject(firstSubj, examSession, examYear);
+                    }
+                  }}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {branchSemesters.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
               <label className="mb-1 block text-xs font-semibold">3. Select Subject</label>
-              <select
-                required
-                value={effectiveSubjectId}
-                onChange={(e) => {
-                  setSubjectId(e.target.value);
-                  if (!editingPaper) autoFillTitle(e.target.value, examSession, examYear);
-                }}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-              >
-                {filteredSubjectsForSelect.length === 0 ? (
-                  <option value="">No subjects in this semester</option>
-                ) : (
-                  filteredSubjectsForSelect.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.code})
-                    </option>
-                  ))
-                )}
-              </select>
+              {isAllBranches ? (
+                <select
+                  required
+                  value={effectiveAllBranchOption?.code || ''}
+                  onChange={(e) => {
+                    const codeVal = e.target.value;
+                    setAllBranchesSubjectCode(codeVal);
+                    const opt = allBranchesSubjectOptions.find((o) => o.code === codeVal);
+                    if (!editingPaper && opt) {
+                      autoFillTitleFromSubject(opt.representative, examSession, examYear);
+                    }
+                  }}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {allBranchesSubjectOptions.length === 0 ? (
+                    <option value="">No subjects in Semester {effectiveSemesterNumber}</option>
+                  ) : (
+                    allBranchesSubjectOptions.map((opt) => (
+                      <option key={opt.code} value={opt.code}>
+                        {opt.representative.name} ({opt.code}) · {opt.matchedBranchIds.length}/
+                        {branchesWithSelectedSemesterCount} branches
+                      </option>
+                    ))
+                  )}
+                </select>
+              ) : (
+                <select
+                  required
+                  value={effectiveSubjectId}
+                  onChange={(e) => {
+                    setSubjectId(e.target.value);
+                    if (!editingPaper) autoFillTitle(e.target.value, examSession, examYear);
+                  }}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {filteredSubjectsForSelect.length === 0 ? (
+                    <option value="">No subjects in this semester</option>
+                  ) : (
+                    filteredSubjectsForSelect.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.code})
+                      </option>
+                    ))
+                  )}
+                </select>
+              )}
             </div>
           </div>
+
+          {isAllBranches && effectiveAllBranchOption && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 space-y-2 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+              <div>
+                Uploading once will publish <strong>{effectiveAllBranchOption.representative.name} ({effectiveAllBranchOption.code})</strong> across{' '}
+                <strong>
+                  {createMissingSubjects
+                    ? branchesWithSelectedSemesterCount
+                    : effectiveAllBranchOption.matchedBranchIds.length}
+                </strong>{' '}
+                branch{branchesWithSelectedSemesterCount === 1 ? '' : 'es'} in{' '}
+                <strong>Semester {effectiveSemesterNumber}</strong>, along with automatic SEO metadata.
+              </div>
+              {effectiveAllBranchOption.matchedBranchIds.length < branchesWithSelectedSemesterCount && (
+                <label className="flex items-center gap-2 font-medium cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createMissingSubjects}
+                    onChange={(e) => setCreateMissingSubjects(e.target.checked)}
+                    className="h-4 w-4 rounded border-blue-300 text-[#1769D2]"
+                  />
+                  <span>
+                    Also create this subject automatically in the remaining{' '}
+                    {branchesWithSelectedSemesterCount - effectiveAllBranchOption.matchedBranchIds.length}{' '}
+                    branch(es) where it is not added yet
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
@@ -353,7 +578,13 @@ export function PaperManager({
                 onChange={(e) => {
                   const sess = e.target.value as ExamSession;
                   setExamSession(sess);
-                  if (!editingPaper) autoFillTitle(effectiveSubjectId, sess, examYear);
+                  if (!editingPaper) {
+                    if (isAllBranches) {
+                      autoFillTitleFromSubject(effectiveAllBranchOption?.representative, sess, examYear);
+                    } else {
+                      autoFillTitle(effectiveSubjectId, sess, examYear);
+                    }
+                  }
                 }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
               >
@@ -373,7 +604,13 @@ export function PaperManager({
                 onChange={(e) => {
                   const yr = Number(e.target.value);
                   setExamYear(yr);
-                  if (!editingPaper) autoFillTitle(effectiveSubjectId, examSession, yr);
+                  if (!editingPaper) {
+                    if (isAllBranches) {
+                      autoFillTitleFromSubject(effectiveAllBranchOption?.representative, examSession, yr);
+                    } else {
+                      autoFillTitle(effectiveSubjectId, examSession, yr);
+                    }
+                  }
                 }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm tabular-nums dark:border-slate-700 dark:bg-slate-950"
               />
@@ -459,7 +696,13 @@ export function PaperManager({
               className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-60"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              <span>{editingPaper ? 'Update Paper' : 'Save & Publish Paper'}</span>
+              <span>
+                {editingPaper
+                  ? 'Update Paper'
+                  : isAllBranches
+                  ? 'Save & Publish to All Branches'
+                  : 'Save & Publish Paper'}
+              </span>
             </button>
             <button
               type="button"

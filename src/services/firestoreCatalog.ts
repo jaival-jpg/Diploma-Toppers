@@ -746,7 +746,8 @@ export async function saveSubject(
     throw new Error(`Subject slug "${cleanSlug}" already exists in the selected branch and semester.`);
   }
 
-  const id = existingId || sanitizeId(`subj-${cleanCode}-${Date.now().toString(36)}`);
+  const rand = Math.random().toString(36).slice(2, 7);
+  const id = existingId || sanitizeId(`subj-${cleanCode}-${Date.now().toString(36)}-${rand}`);
   const path = `subjects/${id}`;
   try {
     if (existingId) {
@@ -858,7 +859,8 @@ export async function savePaper(
   }
 
   const paperSlug = `${input.examSession.toLowerCase()}-${yearNum}`;
-  const id = existingId || sanitizeId(`paper-${input.subjectId}-${paperSlug}-${Date.now().toString(36)}`);
+  const rand = Math.random().toString(36).slice(2, 7);
+  const id = existingId || sanitizeId(`paper-${input.subjectId}-${paperSlug}-${Date.now().toString(36)}-${rand}`);
   const path = `papers/${id}`;
   try {
     if (existingId) {
@@ -937,18 +939,200 @@ export async function deletePaperRecord(
     await deleteDoc(doc(db, 'papers', paperId));
     await deleteSeoMetadataIfPresent('paper', paperId);
     if (token && storagePath && storagePath.startsWith('/api/files/')) {
-      await fetch('/api/admin/files', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ filePath: storagePath }),
-      }).catch(() => {});
+      const remaining = await getAllPapers();
+      const stillInUse = remaining.some((p) => p.id !== paperId && p.pdfStoragePath === storagePath);
+      if (!stillInUse) {
+        await fetch('/api/admin/files', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ filePath: storagePath }),
+        }).catch(() => {});
+      }
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `papers/${paperId}`);
   }
+}
+
+export async function saveSubjectAcrossAllBranches(input: {
+  semesterNumber: number;
+  name: string;
+  code: string;
+  slug: string;
+  description: string;
+  isActive: boolean;
+}): Promise<{ createdCount: number; skippedBranches: string[] }> {
+  const cleanSlug = slugify(input.slug || input.name);
+  const cleanCode = input.code.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  if (!cleanSlug || cleanSlug.length < 2) throw new Error('Subject slug must be at least 2 characters.');
+  if (!cleanCode || cleanCode.length < 2) throw new Error('Valid subject code is required (alphanumeric).');
+
+  const [branches, semesters, existingSubjects] = await Promise.all([
+    getAllBranches(),
+    getAllSemesters(),
+    getAllSubjects(),
+  ]);
+
+  if (branches.length === 0) {
+    throw new Error('No branches exist yet. Create or initialize branches first.');
+  }
+
+  let createdCount = 0;
+  const skippedBranches: string[] = [];
+
+  for (const branch of branches) {
+    const sem = semesters.find(
+      (s) => s.branchId === branch.id && s.semesterNumber === Number(input.semesterNumber)
+    );
+    if (!sem) {
+      skippedBranches.push(`${branch.name} (no Semester ${input.semesterNumber})`);
+      continue;
+    }
+
+    const alreadyExists = existingSubjects.some(
+      (s) =>
+        s.branchId === branch.id &&
+        s.semesterId === sem.id &&
+        (s.code.toUpperCase() === cleanCode || s.slug === cleanSlug)
+    );
+    if (alreadyExists) {
+      skippedBranches.push(`${branch.name} (already exists)`);
+      continue;
+    }
+
+    await saveSubject({
+      branchId: branch.id,
+      semesterId: sem.id,
+      name: input.name,
+      code: cleanCode,
+      slug: cleanSlug,
+      description: input.description,
+      isActive: input.isActive,
+    });
+    createdCount++;
+  }
+
+  if (createdCount === 0) {
+    throw new Error(
+      `Could not create subject in any branch (${skippedBranches.join(', ') || 'no matching semesters'}).`
+    );
+  }
+
+  return { createdCount, skippedBranches };
+}
+
+export async function savePaperAcrossAllBranches(input: {
+  semesterNumber: number;
+  subjectCode: string;
+  subjectName: string;
+  subjectSlug: string;
+  subjectDescription: string;
+  createMissingSubjects: boolean;
+  title: string;
+  examSession: ExamSession;
+  examYear: number;
+  pdfStoragePath: string;
+  originalFilename: string;
+  fileSize: number;
+  isActive: boolean;
+}): Promise<{ createdCount: number; createdSubjectsCount: number; skippedBranches: string[] }> {
+  const cleanCode = input.subjectCode.trim().toUpperCase();
+  const cleanSlug = slugify(input.subjectSlug || input.subjectName);
+
+  const [branches, semesters, allSubjects, allPapers] = await Promise.all([
+    getAllBranches(),
+    getAllSemesters(),
+    getAllSubjects(),
+    getAllPapers(),
+  ]);
+
+  if (branches.length === 0) {
+    throw new Error('No branches exist yet.');
+  }
+
+  let createdCount = 0;
+  let createdSubjectsCount = 0;
+  const skippedBranches: string[] = [];
+
+  for (const branch of branches) {
+    const sem = semesters.find(
+      (s) => s.branchId === branch.id && s.semesterNumber === Number(input.semesterNumber)
+    );
+    if (!sem) {
+      skippedBranches.push(`${branch.name} (no Semester ${input.semesterNumber})`);
+      continue;
+    }
+
+    let targetSubject = allSubjects.find(
+      (s) =>
+        s.branchId === branch.id &&
+        s.semesterId === sem.id &&
+        (s.code.toUpperCase() === cleanCode || s.slug === cleanSlug)
+    );
+
+    if (!targetSubject) {
+      if (!input.createMissingSubjects) {
+        skippedBranches.push(`${branch.name} (subject ${cleanCode} not added)`);
+        continue;
+      }
+      const newSubjId = await saveSubject({
+        branchId: branch.id,
+        semesterId: sem.id,
+        name: input.subjectName,
+        code: cleanCode,
+        slug: cleanSlug,
+        description: input.subjectDescription,
+        isActive: input.isActive,
+      });
+      targetSubject = {
+        id: newSubjId,
+        branchId: branch.id,
+        semesterId: sem.id,
+        name: input.subjectName,
+        code: cleanCode,
+        slug: cleanSlug,
+        description: input.subjectDescription,
+        isActive: input.isActive,
+      };
+      createdSubjectsCount++;
+    }
+
+    const paperExists = allPapers.some(
+      (p) =>
+        p.subjectId === targetSubject!.id &&
+        p.examSession === input.examSession &&
+        p.examYear === Number(input.examYear)
+    );
+    if (paperExists) {
+      skippedBranches.push(`${branch.name} (${input.examSession} ${input.examYear} already exists)`);
+      continue;
+    }
+
+    await savePaper({
+      subjectId: targetSubject.id,
+      branchId: branch.id,
+      semesterId: sem.id,
+      title: input.title,
+      examSession: input.examSession,
+      examYear: input.examYear,
+      pdfStoragePath: input.pdfStoragePath,
+      originalFilename: input.originalFilename,
+      fileSize: input.fileSize,
+      isActive: input.isActive,
+    });
+    createdCount++;
+  }
+
+  if (createdCount === 0) {
+    throw new Error(
+      `Could not upload paper to any branch (${skippedBranches.join(', ') || 'no matching branch/subject'}).`
+    );
+  }
+
+  return { createdCount, createdSubjectsCount, skippedBranches };
 }
 
 export async function saveAdvertisement(

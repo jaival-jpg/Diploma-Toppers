@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
-import { deleteSubjectSafe, saveSubject } from '../../services/firestoreCatalog';
+import { CheckCircle2, Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+  deleteSubjectSafe,
+  saveSubject,
+  saveSubjectAcrossAllBranches,
+} from '../../services/firestoreCatalog';
 import type { Branch, Semester, Subject } from '../../types/academic';
 import { slugify } from '../../utils/slugify';
 
@@ -11,6 +15,8 @@ interface SubjectManagerProps {
   onRefresh: () => Promise<void>;
   initialCreate?: boolean;
 }
+
+const ALL_BRANCHES_VALUE = '__ALL_BRANCHES__';
 
 export function SubjectManager({
   branches,
@@ -24,11 +30,20 @@ export function SubjectManager({
   const [filterBranch, setFilterBranch] = useState<string>('ALL');
 
   const [branchId, setBranchId] = useState<string>(branches[0]?.id || '');
+  const isAllBranches = !editingId && branchId === ALL_BRANCHES_VALUE;
+
   const branchSemesters = useMemo(
     () => semesters.filter((s) => s.branchId === branchId).sort((a, b) => a.semesterNumber - b.semesterNumber),
     [semesters, branchId]
   );
+  const availableSemesterNumbers = useMemo(
+    () =>
+      Array.from(new Set(semesters.map((s) => s.semesterNumber))).sort((a, b) => a - b),
+    [semesters]
+  );
+
   const [semesterId, setSemesterId] = useState<string>('');
+  const [semesterNumber, setSemesterNumber] = useState<number>(availableSemesterNumbers[0] || 1);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [slug, setSlug] = useState('');
@@ -36,6 +51,7 @@ export function SubjectManager({
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Subject | null>(null);
 
   const branchMap = new Map(branches.map((b) => [b.id, b]));
@@ -43,19 +59,24 @@ export function SubjectManager({
 
   const effectiveSemesterId =
     branchSemesters.some((s) => s.id === semesterId) ? semesterId : branchSemesters[0]?.id || '';
+  const effectiveSemesterNumber = availableSemesterNumbers.includes(semesterNumber)
+    ? semesterNumber
+    : availableSemesterNumbers[0] || 1;
 
   const openCreate = () => {
     const defaultBranch = branches[0]?.id || '';
-    const firstSem = semesters.find((s) => s.branchId === defaultBranch)?.id || '';
+    const firstSem = semesters.find((s) => s.branchId === defaultBranch);
     setEditingId(null);
     setBranchId(defaultBranch);
-    setSemesterId(firstSem);
+    setSemesterId(firstSem?.id || '');
+    setSemesterNumber(firstSem?.semesterNumber || availableSemesterNumbers[0] || 1);
     setName('');
     setCode('');
     setSlug('');
     setDescription('');
     setIsActive(true);
     setError(null);
+    setSuccessMessage(null);
     setShowForm(true);
   };
 
@@ -69,30 +90,53 @@ export function SubjectManager({
     setDescription(subj.description);
     setIsActive(subj.isActive);
     setError(null);
+    setSuccessMessage(null);
     setShowForm(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!effectiveSemesterId) {
+    if (!isAllBranches && !effectiveSemesterId) {
       setError('Please select a valid semester.');
+      return;
+    }
+    if (isAllBranches && availableSemesterNumbers.length === 0) {
+      setError('No semesters exist yet. Create semesters first.');
       return;
     }
     setSaving(true);
     setError(null);
+    setSuccessMessage(null);
     try {
-      await saveSubject(
-        {
-          branchId,
-          semesterId: effectiveSemesterId,
+      if (isAllBranches) {
+        const res = await saveSubjectAcrossAllBranches({
+          semesterNumber: effectiveSemesterNumber,
           name,
           code,
           slug: slug || slugify(name),
           description,
           isActive,
-        },
-        editingId || undefined
-      );
+        });
+        const skippedNote =
+          res.skippedBranches.length > 0 ? ` Skipped: ${res.skippedBranches.join(', ')}.` : '';
+        setSuccessMessage(
+          `Subject created in ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'} for Semester ${effectiveSemesterNumber}.${skippedNote}`
+        );
+      } else {
+        await saveSubject(
+          {
+            branchId,
+            semesterId: effectiveSemesterId,
+            name,
+            code,
+            slug: slug || slugify(name),
+            description,
+            isActive,
+          },
+          editingId || undefined
+        );
+        setSuccessMessage(editingId ? 'Subject updated successfully.' : 'Subject created successfully.');
+      }
       setShowForm(false);
       await onRefresh();
     } catch (err) {
@@ -104,6 +148,7 @@ export function SubjectManager({
 
   const handleDelete = async (subj: Subject) => {
     setError(null);
+    setSuccessMessage(null);
     try {
       await deleteSubjectSafe(subj.id);
       setConfirmDelete(null);
@@ -122,7 +167,7 @@ export function SubjectManager({
         <div>
           <h2 className="text-xl font-bold text-[#202124] dark:text-white">Manage Subjects</h2>
           <p className="text-sm text-[#666666] dark:text-slate-400">
-            Add subjects with GTU codes and SEO-friendly slugs to any branch and semester.
+            Add subjects with GTU codes and SEO-friendly slugs to any branch or all branches at once.
           </p>
         </div>
         <button
@@ -142,6 +187,13 @@ export function SubjectManager({
         </div>
       )}
 
+      {successMessage && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>{successMessage}</span>
+        </div>
+      )}
+
       {showForm && (
         <form
           onSubmit={(e) => void handleSubmit(e)}
@@ -157,12 +209,20 @@ export function SubjectManager({
                 required
                 value={branchId}
                 onChange={(e) => {
-                  setBranchId(e.target.value);
-                  const first = semesters.find((s) => s.branchId === e.target.value);
-                  setSemesterId(first?.id || '');
+                  const next = e.target.value;
+                  setBranchId(next);
+                  if (next !== ALL_BRANCHES_VALUE) {
+                    const first = semesters.find((s) => s.branchId === next);
+                    setSemesterId(first?.id || '');
+                  }
                 }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
               >
+                {!editingId && (
+                  <option value={ALL_BRANCHES_VALUE}>
+                    All Branches ({branches.length} branches)
+                  </option>
+                )}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
@@ -172,19 +232,42 @@ export function SubjectManager({
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold">Semester</label>
-              <select
-                required
-                value={effectiveSemesterId}
-                onChange={(e) => setSemesterId(e.target.value)}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-              >
-                {branchSemesters.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              {isAllBranches ? (
+                <select
+                  required
+                  value={effectiveSemesterNumber}
+                  onChange={(e) => setSemesterNumber(Number(e.target.value))}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {availableSemesterNumbers.map((num) => (
+                    <option key={num} value={num}>
+                      Semester {num}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  required
+                  value={effectiveSemesterId}
+                  onChange={(e) => setSemesterId(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                >
+                  {branchSemesters.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
+
+            {isAllBranches && (
+              <div className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50/80 px-3.5 py-2.5 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+                This subject will be created in <strong>all branches</strong> that have{' '}
+                <strong>Semester {effectiveSemesterNumber}</strong>, along with automatic SEO metadata for each branch.
+              </div>
+            )}
+
             <div>
               <label className="mb-1 block text-xs font-semibold">Subject Name</label>
               <input
@@ -248,7 +331,13 @@ export function SubjectManager({
               className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-60"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              <span>{editingId ? 'Save Changes' : 'Create Subject'}</span>
+              <span>
+                {editingId
+                  ? 'Save Changes'
+                  : isAllBranches
+                  ? 'Create Subject in All Branches'
+                  : 'Create Subject'}
+              </span>
             </button>
             <button
               type="button"
