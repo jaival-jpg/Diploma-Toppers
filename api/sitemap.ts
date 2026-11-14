@@ -1,6 +1,39 @@
-import firebaseConfig from '../firebase-applet-config.json';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const FIRESTORE_REST_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents`;
+interface FirebaseWebConfig {
+  projectId: string;
+  firestoreDatabaseId: string;
+  apiKey: string;
+}
+
+const FALLBACK_FIREBASE_CONFIG: FirebaseWebConfig = {
+  projectId: 'gen-lang-client-0269851131',
+  firestoreDatabaseId: 'ai-studio-7e1940ca-1935-4d34-bd9e-62e5ff5de8bf',
+  apiKey: 'AIzaSyC0nRinRASGi7Fjq5q7fgcWWFD7WYv7i20',
+};
+
+function loadFirebaseConfig(): FirebaseWebConfig {
+  try {
+    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<FirebaseWebConfig>;
+      if (parsed.projectId && parsed.firestoreDatabaseId && parsed.apiKey) {
+        return {
+          projectId: parsed.projectId,
+          firestoreDatabaseId: parsed.firestoreDatabaseId,
+          apiKey: parsed.apiKey,
+        };
+      }
+    }
+  } catch {
+    // Fallback cleanly in serverless environments
+  }
+  return FALLBACK_FIREBASE_CONFIG;
+}
+
+const cfg = loadFirebaseConfig();
+const FIRESTORE_REST_BASE = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents`;
 
 interface FirestoreValue {
   stringValue?: string;
@@ -24,11 +57,14 @@ function decodeFields(fields?: Record<string, FirestoreValue>): Record<string, u
 }
 
 async function queryActive(collectionName: string): Promise<Array<Record<string, unknown>>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const url = `${FIRESTORE_REST_BASE}:runQuery?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+    const url = `${FIRESTORE_REST_BASE}:runQuery?key=${encodeURIComponent(cfg.apiKey)}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         structuredQuery: {
           from: [{ collectionId: collectionName }],
@@ -55,6 +91,8 @@ async function queryActive(collectionName: string): Promise<Array<Record<string,
       }));
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -64,31 +102,38 @@ async function listAll(collectionName: string): Promise<Array<Record<string, unk
   let offset = 0;
   try {
     while (true) {
-      const url = `${FIRESTORE_REST_BASE}:runQuery?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          structuredQuery: {
-            from: [{ collectionId: collectionName }],
-            limit: batchSize,
-            offset,
-          },
-        }),
-      });
-      if (!res.ok) break;
-      const rows = (await res.json()) as Array<{
-        document?: { name?: string; fields?: Record<string, FirestoreValue> };
-      }>;
-      const docs = rows
-        .filter((r) => r.document?.fields)
-        .map((r) => ({
-          id: r.document!.name?.split('/').pop() || '',
-          ...decodeFields(r.document!.fields),
-        }));
-      results.push(...docs);
-      if (docs.length < batchSize) break;
-      offset += docs.length;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const url = `${FIRESTORE_REST_BASE}:runQuery?key=${encodeURIComponent(cfg.apiKey)}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            structuredQuery: {
+              from: [{ collectionId: collectionName }],
+              limit: batchSize,
+              offset,
+            },
+          }),
+        });
+        if (!res.ok) break;
+        const rows = (await res.json()) as Array<{
+          document?: { name?: string; fields?: Record<string, FirestoreValue> };
+        }>;
+        const docs = rows
+          .filter((r) => r.document?.fields)
+          .map((r) => ({
+            id: r.document!.name?.split('/').pop() || '',
+            ...decodeFields(r.document!.fields),
+          }));
+        results.push(...docs);
+        if (docs.length < batchSize) break;
+        offset += docs.length;
+      } finally {
+        clearTimeout(timer);
+      }
     }
     return results;
   } catch {
@@ -127,15 +172,28 @@ interface ServerlessReq {
 }
 
 interface ServerlessRes {
+  statusCode?: number;
   setHeader: (name: string, value: string) => void;
-  status: (code: number) => { send: (body: string) => void };
+  status?: (code: number) => { send: (body: string) => void };
+  end?: (body: string) => void;
+}
+
+function sendXml(res: ServerlessRes, statusCode: number, body: string) {
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=600');
+  if (typeof res.status === 'function') {
+    res.status(statusCode).send(body);
+  } else {
+    res.statusCode = statusCode;
+    res.end?.(body);
+  }
 }
 
 export default async function handler(req: ServerlessReq, res: ServerlessRes) {
-  const hostHeader = req.headers?.['x-forwarded-host'] || req.headers?.host;
-  const protoHeader = req.headers?.['x-forwarded-proto'] || 'https';
-  const host = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader || 'diplomatoppers.in';
-  const proto = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
+  const hostHeader = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
+  const protoHeader = req?.headers?.['x-forwarded-proto'] || 'https';
+  const host = (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) || 'diplomatoppers.vercel.app';
+  const proto = (Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || 'https';
   const origin = `${proto}://${host}`;
 
   const [branches, semesters, subjects, papers, settingsList, seoList] = await Promise.all([
@@ -262,7 +320,5 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
     '</urlset>',
   ].join('\n');
 
-  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
-  res.status(200).send(xml);
+  sendXml(res, 200, xml);
 }
