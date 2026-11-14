@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   Download,
@@ -11,8 +12,10 @@ import {
   RotateCcw,
   Save,
   Search,
+  ShieldCheck,
   Sparkles,
   X,
+  XCircle,
 } from 'lucide-react';
 import {
   resetSeoMetadataToDefault,
@@ -63,11 +66,70 @@ const PAGE_TYPE_LABELS: Record<SeoPageType, string> = {
 
 type IssueFilter = 'ALL' | 'MISSING' | 'DUPLICATE' | 'CUSTOMIZED' | 'NOINDEX';
 
+type SeoHealthStatus = 'Passed' | 'Failed' | 'Needs Attention';
+
+interface SeoHealthCheckItem {
+  id: string;
+  number: number;
+  title: string;
+  status: SeoHealthStatus;
+  checkedUrl: string;
+  httpStatus: number | null;
+  details: string;
+}
+
+interface SeoHealthReport {
+  targetUrl: string;
+  checkedAt: string;
+  summary: {
+    passed: number;
+    failed: number;
+    needsAttention: number;
+  };
+  checks: SeoHealthCheckItem[];
+}
+
+function getDefaultProductionTargetUrl(configuredSiteUrl?: string): string {
+  const cleanConfigured = (configuredSiteUrl || '').trim().replace(/\/+$/, '');
+  if (cleanConfigured.startsWith('https://')) {
+    try {
+      const host = new URL(cleanConfigured).hostname.toLowerCase();
+      if (host !== 'localhost' && host !== '127.0.0.1') {
+        return cleanConfigured;
+      }
+    } catch {
+      // Ignore malformed configured siteUrl
+    }
+  }
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, origin } = window.location;
+    const lowerHost = hostname.toLowerCase();
+    if (protocol === 'https:' && lowerHost !== 'localhost' && lowerHost !== '127.0.0.1') {
+      return origin;
+    }
+  }
+  return 'https://diplomatoppers.vercel.app';
+}
+
 function formatTimestamp(iso?: string): string {
   if (!iso) return 'Auto';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return 'Auto';
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatCheckDateTime(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 function escapeCsvCell(value: string): string {
@@ -103,6 +165,18 @@ export function SeoManagementManager({
   const [ogDescription, setOgDescription] = useState('');
   const [ogImageUrl, setOgImageUrl] = useState('');
   const [robotsDirective, setRobotsDirective] = useState<'index_follow' | 'noindex_nofollow'>('index_follow');
+
+  // Automated Production SEO Health Check state
+  const [healthTargetUrl, setHealthTargetUrl] = useState(() =>
+    getDefaultProductionTargetUrl(settings.siteUrl)
+  );
+  const [runningHealthCheck, setRunningHealthCheck] = useState(false);
+  const [healthReport, setHealthReport] = useState<SeoHealthReport | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+
+  const isRunningLocally =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname.toLowerCase());
 
   const combinedRows = useMemo<CombinedSeoRow[]>(() => {
     const storedMap = new Map(seoMetadata.map((item) => [item.id, item]));
@@ -326,6 +400,37 @@ export function SeoManagementManager({
       return raw;
     }
   }, [canonicalUrl, editingRow]);
+
+  const handleRunHealthCheck = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setHealthError(null);
+    setRunningHealthCheck(true);
+    try {
+      const response = await fetch('/api/seo-health-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUrl: healthTargetUrl.trim() }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(
+          `Health check endpoint returned HTTP ${response.status} instead of JSON: ${text.slice(0, 140)}`
+        );
+      }
+
+      const payload = (await response.json()) as SeoHealthReport & { error?: string };
+      if (!response.ok && payload.error) {
+        throw new Error(payload.error);
+      }
+      setHealthReport(payload);
+    } catch (err) {
+      setHealthError(err instanceof Error ? err.message : 'Failed to run production SEO health check.');
+    } finally {
+      setRunningHealthCheck(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -799,6 +904,159 @@ export function SeoManagementManager({
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Automated Production SEO Health Check */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between dark:border-slate-800">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-[#1769D2]" />
+              <h3 className="text-lg font-bold text-[#202124] dark:text-white">
+                Automated Production SEO Health Check
+              </h3>
+              {!healthReport && !runningHealthCheck && (
+                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  Not Checked Yet
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-[#666666] dark:text-slate-400">
+              Runs 10 live HTTP probes directly against your deployed production website (using standard browsers, <code className="font-mono">Googlebot/2.1</code>, and <code className="font-mono">Google-InspectionTool/1.0</code> user agents) to verify <code className="font-mono">/robots.txt</code>, <code className="font-mono">/sitemap.xml</code>, canonicals, noindex directives, and HTTPS behavior.
+            </p>
+            {isRunningLocally && (
+              <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                Running in local preview: checks strictly target your deployed production URL below (never localhost).
+              </p>
+            )}
+          </div>
+
+          <form
+            onSubmit={(e) => void handleRunHealthCheck(e)}
+            className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto lg:min-w-[430px]"
+          >
+            <input
+              type="url"
+              required
+              aria-label="Deployed production domain URL"
+              value={healthTargetUrl}
+              onChange={(e) => setHealthTargetUrl(e.target.value)}
+              placeholder="https://diplomatoppers.vercel.app"
+              className="h-10 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-mono dark:border-slate-700 dark:bg-slate-950"
+            />
+            <button
+              type="submit"
+              disabled={runningHealthCheck}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#1769D2] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#0D47A1] disabled:opacity-60"
+            >
+              {runningHealthCheck ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Running 10 Checks...</span>
+                </>
+              ) : (
+                <>
+                  <Activity className="h-4 w-4" />
+                  <span>Run Production Health Check</span>
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+
+        {healthError && (
+          <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+            <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{healthError}</span>
+          </div>
+        )}
+
+        {healthReport && (
+          <div className="mt-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/60">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span className="tabular-nums">{healthReport.summary.passed} Passed</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1 text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                  <XCircle className="h-3.5 w-3.5" />
+                  <span className="tabular-nums">{healthReport.summary.failed} Failed</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <span className="tabular-nums">{healthReport.summary.needsAttention} Needs Attention</span>
+                </span>
+              </div>
+              <div className="text-[11px] text-[#666666] tabular-nums dark:text-slate-400">
+                Target: <span className="font-mono font-semibold">{healthReport.targetUrl}</span> · Checked {formatCheckDateTime(healthReport.checkedAt)}
+              </div>
+            </div>
+
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+              {healthReport.checks.map((item) => {
+                const badgeClass =
+                  item.status === 'Passed'
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                    : item.status === 'Needs Attention'
+                    ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                    : 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300';
+
+                return (
+                  <div
+                    key={item.id}
+                    className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-[#666666] tabular-nums dark:text-slate-400">
+                          #{item.number}
+                        </span>
+                        <span className="text-sm font-semibold text-[#202124] dark:text-white">
+                          {item.title}
+                        </span>
+                        {item.httpStatus !== null && (
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            HTTP {item.httpStatus}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs leading-relaxed text-[#555555] dark:text-slate-300">
+                        {item.details}
+                      </p>
+                      <div className="truncate font-mono text-[11px] text-[#1769D2] dark:text-blue-400">
+                        {item.checkedUrl.startsWith('http') ? (
+                          <a
+                            href={item.checkedUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 hover:underline"
+                          >
+                            <span className="truncate">{item.checkedUrl}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0" />
+                          </a>
+                        ) : (
+                          <span>{item.checkedUrl}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold ${badgeClass}`}
+                      >
+                        {item.status === 'Passed' && <CheckCircle2 className="h-3.5 w-3.5" />}
+                        {item.status === 'Needs Attention' && <AlertTriangle className="h-3.5 w-3.5" />}
+                        {item.status === 'Failed' && <XCircle className="h-3.5 w-3.5" />}
+                        <span>{item.status}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Technical SEO Notes */}

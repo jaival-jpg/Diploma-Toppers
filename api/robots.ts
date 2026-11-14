@@ -85,7 +85,7 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
       const cfg = loadFirebaseConfig();
       const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents:runQuery?key=${encodeURIComponent(cfg.apiKey)}`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
+      const timer = setTimeout(() => controller.abort(), 1500);
       try {
         const r = await fetch(firestoreUrl, {
           method: 'POST',
@@ -124,7 +124,7 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
   }
 
   const content = [
-    'User-agent: *',
+    'User-Agent: *',
     'Allow: /',
     'Disallow: /admin/',
     'Disallow: /api/admin/',

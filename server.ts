@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
 import firebaseConfig from './firebase-applet-config.json';
+import { runProductionSeoHealthCheck } from './api/seo-health-check';
 
 dotenv.config();
 
@@ -909,6 +910,18 @@ async function startServer() {
 
   // ---- Technical SEO Endpoints ----
 
+  app.post('/api/seo-health-check', async (req, res) => {
+    try {
+      const { targetUrl } = (req.body || {}) as { targetUrl?: string };
+      const report = await runProductionSeoHealthCheck(targetUrl || '');
+      res.json(report);
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'SEO health check failed unexpectedly.',
+      });
+    }
+  });
+
   app.get('/robots.txt', async (req, res) => {
     const origin = getCanonicalOrigin(req);
     const settingsList = await firestoreListCollection('website_settings');
@@ -916,7 +929,7 @@ async function startServer() {
     const base =
       normalizeHttpOrigin(typeof siteUrlSetting === 'string' ? siteUrlSetting : undefined) || origin;
     const content = [
-      'User-agent: *',
+      'User-Agent: *',
       'Allow: /',
       'Disallow: /admin/',
       'Disallow: /api/admin/',
@@ -1090,13 +1103,14 @@ async function startServer() {
       const origin = getCanonicalOrigin(req);
       const seo = await resolveRouteSeo(req.path, origin);
 
+      const hasExistingGoogleVerif = /<meta\s+name=["']google-site-verification["']/i.test(html);
       const metaInject = [
         `<link rel="canonical" href="${escapeHtml(seo.canonical)}" />`,
         `<meta property="og:url" content="${escapeHtml(seo.canonical)}" />`,
         seo.ogImageUrl ? `<meta property="og:image" content="${escapeHtml(seo.ogImageUrl)}" />` : '',
         seo.ogImageUrl ? `<meta name="twitter:image" content="${escapeHtml(seo.ogImageUrl)}" />` : '',
         `<meta name="robots" content="${escapeHtml(seo.robots)}" />`,
-        seo.googleVerification
+        seo.googleVerification && !hasExistingGoogleVerif
           ? `<meta name="google-site-verification" content="${escapeHtml(seo.googleVerification)}" />`
           : '',
         ...seo.jsonLd.map(
@@ -1107,7 +1121,7 @@ async function startServer() {
         .join('\n    ');
 
       html = html
-        .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(seo.title)}</title>`)
+        .replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(seo.title)}</title>`)
         .replace(
           /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/,
           `<meta name="description" content="${escapeHtml(seo.description)}" />`
