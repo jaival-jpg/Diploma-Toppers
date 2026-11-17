@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, Check, Download, ExternalLink, FileText, Share2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, Check, Download, ExternalLink, FileText, Share2 } from 'lucide-react';
 import { AdSlot } from '../components/AdSlot';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
+import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
 import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
@@ -49,6 +50,13 @@ export function PaperPage() {
       .sort((a, b) => b.examYear - a.examYear)
       .slice(0, 6);
   }, [papers, subject, paper]);
+
+  const relatedSemesterSubjects = useMemo(() => {
+    if (!branch || !semester || !subject) return [];
+    return subjects
+      .filter((s) => s.branchId === branch.id && s.semesterId === semester.id && s.id !== subject.id)
+      .slice(0, 6);
+  }, [subjects, branch, semester, subject]);
 
   if (!loading && (!branch || !semester || !subject || !paper)) {
     return <NotFoundPage message="The requested question paper page could not be found." />;
@@ -145,11 +153,32 @@ export function PaperPage() {
               <dl className="mt-6 grid grid-cols-1 gap-4 border-y border-slate-200 py-5 text-sm sm:grid-cols-2 lg:grid-cols-4 dark:border-slate-800">
                 <div>
                   <dt className="text-xs font-medium text-[#666666] dark:text-slate-400">Branch</dt>
-                  <dd className="mt-1 font-semibold text-[#202124] dark:text-white">{branch.name}</dd>
+                  <dd className="mt-1 font-semibold">
+                    <Link
+                      to={`/${branch.slug}`}
+                      className="text-[#1769D2] hover:underline dark:text-blue-400"
+                    >
+                      {branch.name}
+                    </Link>
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-xs font-medium text-[#666666] dark:text-slate-400">Semester</dt>
-                  <dd className="mt-1 font-semibold text-[#202124] dark:text-white">{semester.name}</dd>
+                  <dt className="text-xs font-medium text-[#666666] dark:text-slate-400">Semester &amp; Subject</dt>
+                  <dd className="mt-1 font-semibold">
+                    <Link
+                      to={`/${branch.slug}/semester-${semester.semesterNumber}`}
+                      className="text-[#1769D2] hover:underline dark:text-blue-400"
+                    >
+                      {semester.name}
+                    </Link>
+                    <span className="mx-1 text-[#666666] dark:text-slate-400">·</span>
+                    <Link
+                      to={`/${branch.slug}/semester-${semester.semesterNumber}/${subject.slug}`}
+                      className="text-[#1769D2] hover:underline dark:text-blue-400"
+                    >
+                      {subject.name}
+                    </Link>
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-[#666666] dark:text-slate-400">Exam Session</dt>
@@ -247,10 +276,44 @@ export function PaperPage() {
                 </div>
               )}
             </section>
+            {relatedSemesterSubjects.length > 0 && (
+              <section className="mt-10 border-t border-slate-200 pt-8 dark:border-slate-800">
+                <h2 className="mb-4 text-xl font-bold text-[#202124] dark:text-white">
+                  More Subjects in {branch.name} {semester.name}
+                </h2>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {relatedSemesterSubjects.map((sib) => (
+                    <Link
+                      key={sib.id}
+                      to={`/${branch.slug}/semester-${semester.semesterNumber}/${sib.slug}`}
+                      className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:border-[#1769D2] dark:border-slate-800 dark:bg-slate-900"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-mono text-xs font-semibold text-[#1769D2] dark:text-blue-400">
+                          {sib.code}
+                        </div>
+                        <div className="mt-0.5 truncate text-sm font-bold text-[#202124] group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+                          {sib.name}
+                        </div>
+                      </div>
+                      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-[#1769D2]" />
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
       </main>
 
+      <RelatedContentSection
+        pageType="paper"
+        currentBranchId={branch?.id}
+        currentSemesterId={semester?.id}
+        currentSubjectId={subject?.id}
+        currentSubjectCode={subject?.code}
+        currentPaperId={paper?.id}
+      />
       <Footer />
     </div>
   );

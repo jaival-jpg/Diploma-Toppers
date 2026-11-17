@@ -1,14 +1,16 @@
 import { Link } from 'react-router-dom';
 import { useCatalog } from '../contexts/CatalogContext';
+import { STANDARD_GTU_BRANCHES } from '../services/firestoreCatalog';
 
 export function Footer() {
-  const { settings } = useCatalog();
+  const { branches, settings } = useCatalog();
   const year = new Date().getFullYear();
+  const activeBranches = branches.length > 0 ? branches : STANDARD_GTU_BRANCHES;
 
   return (
     <footer className="bg-[#151515] text-slate-300 border-t border-neutral-800">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-3">
             <Link
               to="/"
@@ -20,6 +22,19 @@ export function Footer() {
               {settings.siteDescription ||
                 'Organized archive of GTU Diploma Engineering previous year Summer and Winter examination question papers across branches, semesters, and subjects.'}
             </p>
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-sm font-semibold text-white">Engineering Branches</h2>
+            <ul className="space-y-2 text-sm">
+              {activeBranches.map((br) => (
+                <li key={br.id}>
+                  <Link to={`/${br.slug}`} className="text-neutral-400 transition-colors hover:text-white">
+                    {br.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <div>

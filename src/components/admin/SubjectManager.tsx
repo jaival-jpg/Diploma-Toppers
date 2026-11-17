@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Edit2, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   deleteSubjectSafe,
   saveSubject,
@@ -52,6 +52,7 @@ export function SubjectManager({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [createdSubjectUrl, setCreatedSubjectUrl] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Subject | null>(null);
 
   const branchMap = new Map(branches.map((b) => [b.id, b]));
@@ -107,20 +108,30 @@ export function SubjectManager({
     setSaving(true);
     setError(null);
     setSuccessMessage(null);
+    setCreatedSubjectUrl(null);
     try {
+      const cleanSlug = slug || slugify(name);
       if (isAllBranches) {
         const res = await saveSubjectAcrossAllBranches({
           semesterNumber: effectiveSemesterNumber,
           name,
           code,
-          slug: slug || slugify(name),
+          slug: cleanSlug,
           description,
           isActive,
         });
         const skippedNote =
           res.skippedBranches.length > 0 ? ` Skipped: ${res.skippedBranches.join(', ')}.` : '';
+        const firstMatchingBranch = branches.find((b) =>
+          semesters.some((s) => s.branchId === b.id && s.semesterNumber === effectiveSemesterNumber)
+        );
+        if (firstMatchingBranch) {
+          setCreatedSubjectUrl(
+            `/${firstMatchingBranch.slug}/semester-${effectiveSemesterNumber}/${cleanSlug}`
+          );
+        }
         setSuccessMessage(
-          `Subject created in ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'} for Semester ${effectiveSemesterNumber}.${skippedNote}`
+          `Subject created in ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'} for Semester ${effectiveSemesterNumber}. Related internal links across the homepage, branch, semester, and footer sections updated automatically.${skippedNote}`
         );
       } else {
         await saveSubject(
@@ -129,13 +140,20 @@ export function SubjectManager({
             semesterId: effectiveSemesterId,
             name,
             code,
-            slug: slug || slugify(name),
+            slug: cleanSlug,
             description,
             isActive,
           },
           editingId || undefined
         );
-        setSuccessMessage(editingId ? 'Subject updated successfully.' : 'Subject created successfully.');
+        const br = branchMap.get(branchId);
+        const sem = semesterMap.get(effectiveSemesterId);
+        if (br && sem) {
+          setCreatedSubjectUrl(`/${br.slug}/semester-${sem.semesterNumber}/${cleanSlug}`);
+        }
+        setSuccessMessage(
+          `${editingId ? 'Subject updated' : 'Subject created'} successfully. Internal links across the homepage, related subjects, and footer section updated automatically.`
+        );
       }
       setShowForm(false);
       await onRefresh();
@@ -188,9 +206,22 @@ export function SubjectManager({
       )}
 
       {successMessage && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-          <span>{successMessage}</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+          {createdSubjectUrl && (
+            <a
+              href={createdSubjectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold underline hover:opacity-80"
+            >
+              <span>View Subject Page</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
         </div>
       )}
 
@@ -420,6 +451,23 @@ export function SubjectManager({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
+                      {(() => {
+                        const br = branchMap.get(s.branchId);
+                        const sem = semesterMap.get(s.semesterId);
+                        if (!br || !sem) return null;
+                        return (
+                          <a
+                            href={`/${br.slug}/semester-${sem.semesterNumber}/${s.slug}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open live subject page"
+                            aria-label={`Open ${s.name} public page`}
+                            className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:text-slate-300"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        );
+                      })()}
                       <button
                         type="button"
                         onClick={() => openEdit(s)}

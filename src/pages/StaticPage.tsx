@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
+import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
 
@@ -94,6 +95,7 @@ export function StaticPage({ kind }: { kind: StaticPageKind }) {
           </div>
         </div>
       </main>
+      <RelatedContentSection pageType="static" />
       <Footer />
     </div>
   );

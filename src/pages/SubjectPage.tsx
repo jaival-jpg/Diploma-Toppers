@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Download, FileText, Search, Sun, Snowflake } from 'lucide-react';
+import { ArrowRight, Download, FileText, Search, Sun, Snowflake } from 'lucide-react';
 import { AdSlot } from '../components/AdSlot';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { Footer } from '../components/Footer';
 import { GtuSearchInsights } from '../components/GtuSearchInsights';
 import { Header } from '../components/Header';
+import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
 import type { Paper } from '../types/academic';
@@ -78,6 +79,26 @@ export function SubjectPage() {
     () => filteredPapers.filter((p) => p.examSession === 'Winter').sort((a, b) => b.examYear - a.examYear),
     [filteredPapers]
   );
+
+  const siblingSubjects = useMemo(() => {
+    if (!branch || !semester || !subject) return [];
+    return subjects.filter(
+      (s) => s.branchId === branch.id && s.semesterId === semester.id && s.id !== subject.id
+    );
+  }, [subjects, branch, semester, subject]);
+
+  const crossBranchSubjects = useMemo(() => {
+    if (!subject) return [];
+    const normCode = subject.code.trim().toUpperCase();
+    return subjects
+      .filter((s) => s.id !== subject.id && s.code.trim().toUpperCase() === normCode)
+      .map((s) => {
+        const br = branches.find((b) => b.id === s.branchId);
+        const sem = semesters.find((sm) => sm.id === s.semesterId);
+        return br && sem ? { subject: s, branch: br, semester: sem } : null;
+      })
+      .filter((x): x is { subject: typeof subject; branch: typeof branches[number]; semester: typeof semesters[number] } => Boolean(x));
+  }, [subjects, branches, semesters, subject]);
 
   if (!loading && (!branch || !semester || !subject)) {
     return <NotFoundPage message="The requested subject page could not be found." />;
@@ -300,6 +321,72 @@ export function SubjectPage() {
               <AdSlot placement="subject_below_papers" compact />
             </div>
 
+            {/* Related Subjects & Same Subject in Other Branches */}
+            {(siblingSubjects.length > 0 || crossBranchSubjects.length > 0) && (
+              <section className="mb-10 space-y-8 border-t border-slate-200 pt-10 dark:border-slate-800">
+                {siblingSubjects.length > 0 && (
+                  <div>
+                    <h2 className="mb-4 text-xl font-bold text-[#202124] dark:text-white">
+                      Related Subjects in {branch.name} {semester.name}
+                    </h2>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {siblingSubjects.map((sib) => {
+                        const count = papers.filter((p) => p.subjectId === sib.id).length;
+                        return (
+                          <Link
+                            key={sib.id}
+                            to={`/${branch.slug}/semester-${semester.semesterNumber}/${sib.slug}`}
+                            className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:border-[#1769D2] dark:border-slate-800 dark:bg-slate-900"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs text-[#666666] dark:text-slate-400 tabular-nums">
+                                <span className="font-mono font-semibold text-[#1769D2] dark:text-blue-400">
+                                  {sib.code}
+                                </span>
+                                <span aria-hidden="true"> · </span>
+                                <span>{count} {count === 1 ? 'Paper' : 'Papers'}</span>
+                              </div>
+                              <div className="mt-1 truncate text-sm font-bold text-[#202124] group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+                                {sib.name}
+                              </div>
+                            </div>
+                            <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-[#1769D2]" />
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {crossBranchSubjects.length > 0 && (
+                  <div>
+                    <h2 className="mb-4 text-xl font-bold text-[#202124] dark:text-white">
+                      {subject.name} ({subject.code}) in Other Branches
+                    </h2>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {crossBranchSubjects.map((item) => (
+                        <Link
+                          key={item.subject.id}
+                          to={`/${item.branch.slug}/semester-${item.semester.semesterNumber}/${item.subject.slug}`}
+                          className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:border-[#1769D2] dark:border-slate-800 dark:bg-slate-900"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-xs text-[#666666] dark:text-slate-400">
+                              {item.semester.name} · Code {item.subject.code}
+                            </div>
+                            <div className="mt-1 truncate text-sm font-bold text-[#202124] group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+                              {item.branch.name}
+                            </div>
+                          </div>
+                          <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-[#1769D2]" />
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* Live GTU Syllabus & Exam Pattern Grounding */}
             <GtuSearchInsights
               mode="subject"
@@ -312,6 +399,13 @@ export function SubjectPage() {
         )}
       </main>
 
+      <RelatedContentSection
+        pageType="subject"
+        currentBranchId={branch?.id}
+        currentSemesterId={semester?.id}
+        currentSubjectId={subject?.id}
+        currentSubjectCode={subject?.code}
+      />
       <Footer />
     </div>
   );

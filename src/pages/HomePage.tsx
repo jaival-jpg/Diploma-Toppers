@@ -12,6 +12,7 @@ import { Footer } from '../components/Footer';
 import { GlobalSearchBar } from '../components/GlobalSearchBar';
 import { GtuSearchInsights } from '../components/GtuSearchInsights';
 import { Header } from '../components/Header';
+import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
 import { STANDARD_GTU_BRANCHES } from '../services/firestoreCatalog';
@@ -43,7 +44,10 @@ export function HomePage() {
     const subject = subjectMap.get(paper.subjectId);
     if (!branch || !sem || !subject) return null;
 
-    const paperUrl = `/${branch.slug}/semester-${sem.semesterNumber}/${subject.slug}/${paper.slug}`;
+    const branchUrl = `/${branch.slug}`;
+    const semUrl = `/${branch.slug}/semester-${sem.semesterNumber}`;
+    const subjectUrl = `${semUrl}/${subject.slug}`;
+    const paperUrl = `${subjectUrl}/${paper.slug}`;
     return (
       <article
         key={paper.id}
@@ -51,11 +55,20 @@ export function HomePage() {
       >
         <div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-[#666666] dark:text-slate-400">
-            <span className="font-mono font-medium text-[#1769D2] dark:text-blue-400">{subject.code}</span>
+            <Link
+              to={subjectUrl}
+              className="font-mono font-medium text-[#1769D2] hover:underline dark:text-blue-400"
+            >
+              {subject.code}
+            </Link>
             <span aria-hidden="true">·</span>
-            <span>{branch.name}</span>
+            <Link to={branchUrl} className="hover:text-[#1769D2] hover:underline dark:hover:text-blue-400">
+              {branch.name}
+            </Link>
             <span aria-hidden="true">·</span>
-            <span>Semester {sem.semesterNumber}</span>
+            <Link to={semUrl} className="hover:text-[#1769D2] hover:underline dark:hover:text-blue-400">
+              Semester {sem.semesterNumber}
+            </Link>
           </div>
           <Link to={paperUrl} className="mt-2 block group">
             <h3 className="text-base font-bold text-[#202124] transition-colors group-hover:text-[#1769D2] dark:text-slate-100 dark:group-hover:text-blue-400">
@@ -264,6 +277,60 @@ export function HomePage() {
           </section>
         )}
 
+        {/* Popular & Active Subjects Internal Directory */}
+        {subjects.length > 0 && (
+          <section
+            id="active-subjects"
+            className="border-t border-slate-100 py-12 sm:py-16 dark:border-slate-800/80"
+          >
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-[#202124] sm:text-3xl dark:text-white">
+                    Explore Subjects &amp; Semesters
+                  </h2>
+                  <p className="mt-1.5 text-sm text-[#666666] dark:text-slate-400">
+                    Direct links to active GTU Diploma subject pages and semester archives across all branches.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {subjects.slice(0, 12).map((subj) => {
+                  const br = branchMap.get(subj.branchId);
+                  const sem = semesterMap.get(subj.semesterId);
+                  if (!br || !sem) return null;
+                  const subjUrl = `/${br.slug}/semester-${sem.semesterNumber}/${subj.slug}`;
+                  const count = papers.filter((p) => p.subjectId === subj.id).length;
+                  return (
+                    <Link
+                      key={subj.id}
+                      to={subjUrl}
+                      className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:border-[#1769D2] dark:border-slate-800 dark:bg-slate-900"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-[#666666] dark:text-slate-400 tabular-nums">
+                          <span className="font-mono font-semibold text-[#1769D2] dark:text-blue-400">
+                            {subj.code}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{br.name.replace(/^Diploma\s+/i, '')} Sem {sem.semesterNumber}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{count} {count === 1 ? 'Paper' : 'Papers'}</span>
+                        </div>
+                        <div className="mt-1 truncate text-sm font-bold text-[#202124] group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+                          {subj.name}
+                        </div>
+                      </div>
+                      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-[#1769D2]" />
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Live GTU Search Grounding */}
         <section className="border-t border-slate-100 py-12 sm:py-16 dark:border-slate-800/80">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -272,6 +339,7 @@ export function HomePage() {
         </section>
       </main>
 
+      <RelatedContentSection pageType="home" />
       <Footer />
     </div>
   );

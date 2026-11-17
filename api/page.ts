@@ -164,6 +164,92 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function buildSsrRelatedLinksHtml(params: {
+  branches: Array<Record<string, unknown>>;
+  semesters: Array<Record<string, unknown>>;
+  subjects: Array<Record<string, unknown>>;
+  papers: Array<Record<string, unknown>>;
+  currentBranch?: Record<string, unknown>;
+  currentSemester?: Record<string, unknown>;
+  currentSubject?: Record<string, unknown>;
+  currentPaper?: Record<string, unknown>;
+}): string {
+  const { branches, semesters, subjects, papers, currentBranch, currentSemester, currentSubject, currentPaper } = params;
+  const branchById = new Map(branches.map((b) => [String(b.id), b]));
+  const semById = new Map(semesters.map((s) => [String(s.id), s]));
+  const subjById = new Map(subjects.map((s) => [String(s.id), s]));
+
+  const branchLinks = branches
+    .map((b) => `<li><a href="/${escapeHtml(String(b.slug))}">${escapeHtml(String(b.name))}</a></li>`)
+    .join('');
+
+  const subjectLinks: string[] = [];
+  const seenSubj = new Set<string>();
+  const addSubjLink = (s: Record<string, unknown>) => {
+    const br = branchById.get(String(s.branchId));
+    const sem = semById.get(String(s.semesterId));
+    if (!br || !sem) return;
+    const href = `/${String(br.slug)}/semester-${Number(sem.semesterNumber)}/${String(s.slug)}`;
+    if (seenSubj.has(href)) return;
+    seenSubj.add(href);
+    subjectLinks.push(`<li><a href="${escapeHtml(href)}">${escapeHtml(String(s.name))} (${escapeHtml(String(s.code))})</a></li>`);
+  };
+
+  if (currentSubject) {
+    const code = String(currentSubject.code || '').toUpperCase();
+    for (const s of subjects) {
+      if (String(s.id) !== String(currentSubject.id) && String(s.code || '').toUpperCase() === code) addSubjLink(s);
+    }
+  }
+  if (currentBranch && currentSemester) {
+    for (const s of subjects) {
+      if (String(s.branchId) === String(currentBranch.id) && String(s.semesterId) === String(currentSemester.id) && String(s.id) !== String(currentSubject?.id || '')) {
+        addSubjLink(s);
+      }
+    }
+  }
+  for (const s of subjects) {
+    if (subjectLinks.length >= 10) break;
+    if (String(s.id) !== String(currentSubject?.id || '')) addSubjLink(s);
+  }
+
+  const paperLinks: string[] = [];
+  const seenPaper = new Set<string>();
+  const addPaperLink = (p: Record<string, unknown>) => {
+    if (currentPaper && String(p.id) === String(currentPaper.id)) return;
+    const br = branchById.get(String(p.branchId));
+    const sem = semById.get(String(p.semesterId));
+    const subj = subjById.get(String(p.subjectId));
+    if (!br || !sem || !subj) return;
+    const href = `/${String(br.slug)}/semester-${Number(sem.semesterNumber)}/${String(subj.slug)}/${String(p.slug)}`;
+    if (seenPaper.has(href)) return;
+    seenPaper.add(href);
+    paperLinks.push(`<li><a href="${escapeHtml(href)}">${escapeHtml(String(p.title))}</a></li>`);
+  };
+
+  if (currentSubject) {
+    for (const p of papers) {
+      if (String(p.subjectId) === String(currentSubject.id)) addPaperLink(p);
+    }
+  }
+  for (const p of papers) {
+    if (paperLinks.length >= 10) break;
+    addPaperLink(p);
+  }
+
+  const siteLinks = [
+    '<li><a href="/">Home</a></li>',
+    '<li><a href="/about">About Us</a></li>',
+    '<li><a href="/contact">Contact Us</a></li>',
+    '<li><a href="/privacy-policy">Privacy Policy</a></li>',
+    '<li><a href="/terms-and-conditions">Terms &amp; Conditions</a></li>',
+    '<li><a href="/disclaimer">Academic Disclaimer</a></li>',
+    '<li><a href="/sitemap.xml">XML Sitemap</a></li>',
+  ].join('');
+
+  return `<nav aria-label="Related Content and Internal Links"><h2>Related Content &amp; Internal Links</h2><ul>${branchLinks}</ul>${subjectLinks.length ? `<ul>${subjectLinks.join('')}</ul>` : ''}${paperLinks.length ? `<ul>${paperLinks.join('')}</ul>` : ''}<ul>${siteLinks}</ul></nav>`;
+}
+
 async function loadIndexTemplate(origin: string): Promise<string> {
   const candidates = [
     path.resolve(process.cwd(), 'dist', 'index.html'),
@@ -333,7 +419,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
           `<li><a href="/${escapeHtml(String(b.slug))}">${escapeHtml(String(b.name))} (Code ${escapeHtml(String(b.code))})</a></li>`
       )
       .join('');
-    defaultSeo.ssrFallbackHtml = `<h1>Select Your Engineering Branch | DiplomaToppers</h1><ul>${branchLinks}</ul>`;
+    defaultSeo.ssrFallbackHtml = `<h1>Select Your Engineering Branch | DiplomaToppers</h1><ul>${branchLinks}</ul>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers })}`;
     return applySeoOverride('seo-home-home', '/', defaultSeo);
   }
 
@@ -368,7 +454,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
   if (staticTitles[cleanPath]) {
     defaultSeo.title = staticTitles[cleanPath].title;
     defaultSeo.description = staticTitles[cleanPath].desc;
-    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(staticTitles[cleanPath].title)}</h1><p>${escapeHtml(staticTitles[cleanPath].desc)}</p>`;
+    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(staticTitles[cleanPath].title)}</h1><p>${escapeHtml(staticTitles[cleanPath].desc)}</p>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers })}`;
     return applySeoOverride(`seo-static-${staticTitles[cleanPath].id}`, cleanPath, defaultSeo);
   }
 
@@ -404,7 +490,15 @@ async function resolveRouteSeo(pathname: string, origin: string) {
         item: b.item,
       })),
     });
-    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} (Code ${escapeHtml(String(branch.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
+    const branchSemLinks = semesters
+      .filter((s) => s.branchId === branch.id)
+      .sort((a, b) => Number(a.semesterNumber) - Number(b.semesterNumber))
+      .map(
+        (s) =>
+          `<li><a href="/${escapeHtml(String(branch.slug))}/semester-${Number(s.semesterNumber)}">${escapeHtml(String(s.name))}</a></li>`
+      )
+      .join('');
+    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} (Code ${escapeHtml(String(branch.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p><ul>${branchSemLinks}</ul>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers, currentBranch: branch })}`;
     return applySeoOverride(`seo-branch-${String(branch.id)}`, cleanPath, defaultSeo);
   }
 
@@ -441,7 +535,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
           `<li><a href="/${escapeHtml(String(branch.slug))}/semester-${semNum}/${escapeHtml(String(s.slug))}">${escapeHtml(String(s.name))} (${escapeHtml(String(s.code))})</a></li>`
       )
       .join('');
-    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} — Semester ${semNum}</h1><ul>${subjLinks}</ul>`;
+    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(branch.name))} — Semester ${semNum}</h1><ul>${subjLinks}</ul>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers, currentBranch: branch, currentSemester: semester })}`;
     return applySeoOverride(`seo-semester-${String(semester.id)}`, cleanPath, defaultSeo);
   }
 
@@ -474,7 +568,14 @@ async function resolveRouteSeo(pathname: string, origin: string) {
         item: b.item,
       })),
     });
-    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(subject.name))} (${escapeHtml(String(subject.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
+    const subjectPaperLinks = papers
+      .filter((p) => p.subjectId === subject.id)
+      .map(
+        (p) =>
+          `<li><a href="/${escapeHtml(String(branch.slug))}/semester-${semNum}/${escapeHtml(String(subject.slug))}/${escapeHtml(String(p.slug))}">${escapeHtml(String(p.title))}</a></li>`
+      )
+      .join('');
+    defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(subject.name))} (${escapeHtml(String(subject.code))})</h1><p>${escapeHtml(defaultSeo.description)}</p><ul>${subjectPaperLinks}</ul>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers, currentBranch: branch, currentSemester: semester, currentSubject: subject })}`;
     return applySeoOverride(`seo-subject-${String(subject.id)}`, cleanPath, defaultSeo);
   }
 
@@ -512,7 +613,7 @@ async function resolveRouteSeo(pathname: string, origin: string) {
       datePublished: String(paper.createdAt || ''),
     }
   );
-  defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(paper.title))}</h1><p>${escapeHtml(defaultSeo.description)}</p>`;
+  defaultSeo.ssrFallbackHtml = `<h1>${escapeHtml(String(paper.title))}</h1><p>${escapeHtml(defaultSeo.description)}</p><p><a href="/${escapeHtml(String(branch.slug))}/semester-${semNum}/${escapeHtml(String(subject.slug))}">All ${escapeHtml(String(subject.name))} Papers</a></p>${buildSsrRelatedLinksHtml({ branches, semesters, subjects, papers, currentBranch: branch, currentSemester: semester, currentSubject: subject, currentPaper: paper })}`;
   return applySeoOverride(`seo-paper-${String(paper.id)}`, cleanPath, defaultSeo);
 }
 

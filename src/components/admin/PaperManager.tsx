@@ -124,6 +124,7 @@ export function PaperManager({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [createdPaperUrl, setCreatedPaperUrl] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Paper | null>(null);
 
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
@@ -275,7 +276,9 @@ export function PaperManager({
     setSaving(true);
     setError(null);
     setSuccessMessage(null);
+    setCreatedPaperUrl(null);
     try {
+      const paperSlug = `${examSession.toLowerCase()}-${Number(examYear)}`;
       if (isAllBranches && effectiveAllBranchOption) {
         const rep = effectiveAllBranchOption.representative;
         const res = await savePaperAcrossAllBranches({
@@ -301,8 +304,16 @@ export function PaperManager({
           extras.push(`skipped: ${res.skippedBranches.join(', ')}`);
         }
         const suffix = extras.length > 0 ? ` (${extras.join('; ')})` : '';
+        const firstBr = branches.find((b) =>
+          semesters.some((s) => s.branchId === b.id && s.semesterNumber === effectiveSemesterNumber)
+        );
+        if (firstBr) {
+          setCreatedPaperUrl(
+            `/${firstBr.slug}/semester-${effectiveSemesterNumber}/${rep.slug}/${paperSlug}`
+          );
+        }
         setSuccessMessage(
-          `Question paper published to ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'}${suffix}.`
+          `Question paper published to ${res.createdCount} branch${res.createdCount === 1 ? '' : 'es'}. Related paper & subject internal links updated automatically${suffix}.`
         );
       } else {
         await savePaper(
@@ -320,7 +331,17 @@ export function PaperManager({
           },
           editingPaper?.id
         );
-        setSuccessMessage(editingPaper ? 'Question paper updated successfully.' : 'Question paper published successfully.');
+        const br = branchMap.get(branchId);
+        const sem = semesterMap.get(effectiveSemesterId);
+        const subj = subjectMap.get(effectiveSubjectId);
+        if (br && sem && subj) {
+          setCreatedPaperUrl(
+            `/${br.slug}/semester-${sem.semesterNumber}/${subj.slug}/${paperSlug}`
+          );
+        }
+        setSuccessMessage(
+          `${editingPaper ? 'Question paper updated' : 'Question paper published'} successfully. Related paper, subject, homepage, and footer internal links updated automatically.`
+        );
       }
       setShowForm(false);
       await onRefresh();
@@ -378,9 +399,22 @@ export function PaperManager({
       )}
 
       {successMessage && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-          <span>{successMessage}</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+          {createdPaperUrl && (
+            <a
+              href={createdPaperUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold underline hover:opacity-80"
+            >
+              <span>View Paper Page</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
         </div>
       )}
 
@@ -762,7 +796,18 @@ export function PaperManager({
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 font-semibold text-[#202124] dark:text-white">
                         <FileText className="h-4 w-4 shrink-0 text-[#1769D2]" />
-                        <span>{p.title}</span>
+                        {subj && br && sem ? (
+                          <a
+                            href={`/${br.slug}/semester-${sem.semesterNumber}/${subj.slug}/${p.slug}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-[#1769D2] hover:underline dark:hover:text-blue-400"
+                          >
+                            {p.title}
+                          </a>
+                        ) : (
+                          <span>{p.title}</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs text-[#666666] dark:text-slate-400">

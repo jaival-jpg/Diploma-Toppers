@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { FileQuestion } from 'lucide-react';
 import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
+import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 
 export function NotFoundPage({ message }: { message?: string }) {
@@ -31,6 +32,7 @@ export function NotFoundPage({ message }: { message?: string }) {
           Go to Homepage
         </Link>
       </main>
+      <RelatedContentSection pageType="static" />
       <Footer />
     </div>
   );
