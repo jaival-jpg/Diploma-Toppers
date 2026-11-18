@@ -6,6 +6,7 @@ import {
   savePaper,
   savePaperAcrossAllBranches,
 } from '../../services/firestoreCatalog';
+import { uploadPdfToCloud } from '../../services/cloudFileStorage';
 import type { Branch, ExamSession, Paper, Semester, Subject } from '../../types/academic';
 import { formatFileSize } from '../../utils/slugify';
 
@@ -201,58 +202,21 @@ export function PaperManager({
       return;
     }
 
-    const token = await getIdToken();
-    if (!token) {
-      setError('Admin session expired. Please log in again.');
-      return;
-    }
-
     setUploadProgress(0);
-    const formData = new FormData();
-    formData.append('file', file);
-
-    await new Promise<void>((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/admin/upload-pdf');
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-
-      xhr.upload.onprogress = (evt) => {
-        if (evt.lengthComputable) {
-          setUploadProgress(Math.round((evt.loaded / evt.total) * 100));
-        }
-      };
-
-      xhr.onload = () => {
-        setUploadProgress(null);
-        try {
-          const json = JSON.parse(xhr.responseText) as {
-            pdfStoragePath?: string;
-            originalFilename?: string;
-            fileSize?: number;
-            error?: string;
-          };
-          if (xhr.status >= 200 && xhr.status < 300 && json.pdfStoragePath) {
-            setPdfStoragePath(json.pdfStoragePath);
-            setOriginalFilename(json.originalFilename || file.name);
-            setFileSize(json.fileSize || file.size);
-            setUploadStatus(`Uploaded ${json.originalFilename || file.name} (${formatFileSize(json.fileSize || file.size)})`);
-          } else {
-            setError(json.error || 'PDF upload failed.');
-          }
-        } catch {
-          setError('Unexpected response during PDF upload.');
-        }
-        resolve();
-      };
-
-      xhr.onerror = () => {
-        setUploadProgress(null);
-        setError('Network error during PDF upload.');
-        resolve();
-      };
-
-      xhr.send(formData);
-    });
+    try {
+      const uploaded = await uploadPdfToCloud(file, (pct) => {
+        setUploadProgress(pct);
+      });
+      setPdfStoragePath(uploaded.pdfStoragePath);
+      setOriginalFilename(uploaded.originalFilename);
+      setFileSize(uploaded.fileSize);
+      setUploadStatus(`Uploaded to cloud (${formatFileSize(uploaded.fileSize)})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PDF upload failed.');
+    } finally {
+      setUploadProgress(null);
+      e.target.value = '';
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -817,7 +781,12 @@ export function PaperManager({
                       {p.examSession} {p.examYear}
                     </td>
                     <td className="px-4 py-3 text-xs tabular-nums text-[#666666] dark:text-slate-400">
-                      {formatFileSize(p.fileSize)} · {p.downloadCount} dl
+                      <div>{formatFileSize(p.fileSize)} · {p.downloadCount} dl</div>
+                      {p.pdfStoragePath.startsWith('/api/files/') && (
+                        <div className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          Legacy local file · Re-upload PDF for live site
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs font-semibold">
                       <span className={p.isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
@@ -827,7 +796,7 @@ export function PaperManager({
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-2">
                         <a
-                          href={p.pdfStoragePath}
+                          href={`/api/papers/${p.id}/view`}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="View existing PDF"

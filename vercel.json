@@ -7,6 +7,10 @@
   "rewrites": [
     { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/robots.txt", "destination": "/api/robots" },
+    { "source": "/api/papers/:paperId/view", "destination": "/api/paper-file?action=view&paperId=:paperId" },
+    { "source": "/api/papers/:paperId/download", "destination": "/api/paper-file?action=download&paperId=:paperId" },
+    { "source": "/api/pdf-files/:fileId", "destination": "/api/paper-file?action=file&fileId=:fileId" },
+    { "source": "/api/stats/downloads", "destination": "/api/paper-file?action=stats" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/", "destination": "/api/page?route=/" },
     {

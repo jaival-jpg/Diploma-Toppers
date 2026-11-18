@@ -80,7 +80,8 @@ async function firestoreGetDocument(
   bearerToken?: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const url = `${FIRESTORE_REST_BASE}/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+    const encodedPath = collectionName.split('/').map(encodeURIComponent).join('/');
+    const url = `${FIRESTORE_REST_BASE}/${encodedPath}/${encodeURIComponent(docId)}?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
     const headers: Record<string, string> = {};
     if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
     const res = await fetch(url, { headers });
@@ -91,6 +92,202 @@ async function firestoreGetDocument(
     return { id, ...decodeFirestoreFields(json.fields) };
   } catch {
     return null;
+  }
+}
+
+async function fetchCloudFileFromFirestore(
+  fileId: string
+): Promise<{ buffer: Buffer; contentType: string; originalFilename: string } | null> {
+  const meta = await firestoreGetDocument('paper_files', fileId);
+  if (!meta) return null;
+
+  const chunkCount = Math.max(0, Number(meta.chunkCount || 0));
+  if (chunkCount <= 0 || chunkCount > 60) return null;
+
+  try {
+    const chunkDocs = await Promise.all(
+      Array.from({ length: chunkCount }, (_, i) => {
+        const chunkId = `chunk-${String(i).padStart(4, '0')}`;
+        return firestoreGetDocument(`paper_files/${encodeURIComponent(fileId)}/chunks`, chunkId);
+      })
+    );
+
+    const buffers: Buffer[] = [];
+    for (const chunkDoc of chunkDocs) {
+      if (!chunkDoc || typeof chunkDoc.dataBase64 !== 'string') {
+        return null;
+      }
+      buffers.push(Buffer.from(chunkDoc.dataBase64, 'base64'));
+    }
+
+    return {
+      buffer: Buffer.concat(buffers),
+      contentType: String(meta.contentType || 'application/pdf'),
+      originalFilename: String(meta.originalFilename || 'GTU-Question-Paper.pdf').replace(/"/g, ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function incrementDownloadStatFirestore(paperId: string): Promise<void> {
+  try {
+    const docName = `projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents/paper_stats/${paperId}`;
+    const commitUrl = `${FIRESTORE_REST_BASE}:commit?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+    await fetch(commitUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        writes: [
+          {
+            update: {
+              name: docName,
+              fields: { paperId: { stringValue: paperId } },
+            },
+            updateMask: { fieldPaths: ['paperId'] },
+            updateTransforms: [
+              { fieldPath: 'downloadCount', increment: { integerValue: '1' } },
+              { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
+            ],
+          },
+        ],
+      }),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+async function uploadBufferToFirestoreCloud(
+  fileBuffer: Buffer,
+  originalFilename: string,
+  contentType = 'application/pdf'
+): Promise<string | null> {
+  const CHUNK_BYTES = 480 * 1024;
+  const chunkCount = Math.max(1, Math.ceil(fileBuffer.length / CHUNK_BYTES));
+  const fileId = `pdf-mig-${Date.now().toString(36)}-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`;
+  const commitUrl = `${FIRESTORE_REST_BASE}:commit?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+  const fileDocName = `projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents/paper_files/${fileId}`;
+
+  const createMetaRes = await fetch(commitUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      writes: [
+        {
+          currentDocument: { exists: false },
+          update: {
+            name: fileDocName,
+            fields: {
+              originalFilename: { stringValue: originalFilename.slice(0, 255) || 'question-paper.pdf' },
+              contentType: { stringValue: contentType },
+              fileSize: { integerValue: String(fileBuffer.length) },
+              chunkCount: { integerValue: String(chunkCount) },
+            },
+          },
+          updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }],
+        },
+      ],
+    }),
+  });
+  if (!createMetaRes.ok) {
+    const errText = await createMetaRes.text().catch(() => '');
+    console.error('Cloud migration metadata write failed:', createMetaRes.status, errText);
+    return null;
+  }
+
+  for (let i = 0; i < chunkCount; i++) {
+    const slice = fileBuffer.subarray(i * CHUNK_BYTES, Math.min((i + 1) * CHUNK_BYTES, fileBuffer.length));
+    const chunkId = `chunk-${String(i).padStart(4, '0')}`;
+    const chunkDocName = `${fileDocName}/chunks/${chunkId}`;
+    const chunkRes = await fetch(commitUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        writes: [
+          {
+            currentDocument: { exists: false },
+            update: {
+              name: chunkDocName,
+              fields: {
+                index: { integerValue: String(i) },
+                dataBase64: { stringValue: slice.toString('base64') },
+              },
+            },
+          },
+        ],
+      }),
+    });
+    if (!chunkRes.ok) {
+      const errText = await chunkRes.text().catch(() => '');
+      console.error('Cloud migration chunk write failed:', chunkRes.status, errText);
+      return null;
+    }
+  }
+
+  return `/api/pdf-files/${fileId}`;
+}
+
+async function syncLocalDiskPdfsToCloudStorage(): Promise<void> {
+  try {
+    const papers = await firestoreListCollection('papers');
+    const legacyPapers = papers.filter((p) =>
+      String(p.pdfStoragePath || '').startsWith('/api/files/papers/')
+    );
+    if (legacyPapers.length === 0) return;
+
+    const uploadedByLocalPath = new Map<string, string>();
+    const commitUrl = `${FIRESTORE_REST_BASE}:commit?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+    let migratedCount = 0;
+
+    for (const p of legacyPapers) {
+      const localStoragePath = String(p.pdfStoragePath || '');
+      const filename = path.basename(localStoragePath.slice('/api/files/papers/'.length));
+      const fullPath = path.join(PAPERS_DIR, filename);
+      if (!fs.existsSync(fullPath)) continue;
+
+      let cloudPath = uploadedByLocalPath.get(localStoragePath);
+      if (!cloudPath) {
+        const buf = fs.readFileSync(fullPath);
+        const orig = String(p.originalFilename || filename);
+        const created = await uploadBufferToFirestoreCloud(buf, orig, 'application/pdf');
+        if (!created) continue;
+        cloudPath = created;
+        uploadedByLocalPath.set(localStoragePath, cloudPath);
+      }
+
+      const paperDocName = `projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents/papers/${String(p.id)}`;
+      const updateRes = await fetch(commitUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          writes: [
+            {
+              update: {
+                name: paperDocName,
+                fields: {
+                  pdfStoragePath: { stringValue: cloudPath },
+                },
+              },
+              updateMask: { fieldPaths: ['pdfStoragePath'] },
+              updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+            },
+          ],
+        }),
+      });
+      if (updateRes.ok) {
+        migratedCount++;
+      } else {
+        const errText = await updateRes.text().catch(() => '');
+        console.error(`Failed to update paper ${String(p.id)} path:`, updateRes.status, errText);
+      }
+    }
+
+    if (migratedCount > 0) {
+      console.log(`Synced ${migratedCount} local preview paper(s) to shared Firestore cloud storage.`);
+    }
+  } catch (err) {
+    console.error('Local PDF cloud sync error:', err);
   }
 }
 
@@ -747,8 +944,18 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.get('/api/stats/downloads', (_req, res) => {
-    res.json({ counts: readDownloadStats() });
+  app.get('/api/stats/downloads', async (_req, res) => {
+    const localStats = readDownloadStats();
+    const docs = await firestoreListCollection('paper_stats');
+    const merged: Record<string, number> = { ...localStats };
+    for (const d of docs) {
+      const id = String(d.id || '');
+      const cnt = Number(d.downloadCount || 0);
+      if (id && cnt > 0) {
+        merged[id] = Math.max(merged[id] || 0, cnt);
+      }
+    }
+    res.json({ counts: merged });
   });
 
   // Protected Admin PDF Upload
@@ -868,6 +1075,25 @@ async function startServer() {
     res.sendFile(fullPath);
   });
 
+  // Public Cloud PDF/Asset Direct Serving (Firestore chunked storage)
+  app.get('/api/pdf-files/:fileId', async (req, res) => {
+    const fileId = String(req.params.fileId || '').trim();
+    if (!fileId) {
+      res.status(400).json({ error: 'Invalid file ID.' });
+      return;
+    }
+    const file = await fetchCloudFileFromFirestore(fileId);
+    if (!file) {
+      res.status(404).send('File not found in cloud storage.');
+      return;
+    }
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `inline; filename="${file.originalFilename}"`);
+    res.send(file.buffer);
+  });
+
   // View Paper (opens inline in new tab, does NOT increment download count)
   app.get('/api/papers/:paperId/view', async (req, res) => {
     const { paperId } = req.params;
@@ -884,6 +1110,22 @@ async function startServer() {
     }
 
     const storagePath = String(paper.pdfStoragePath || '');
+    if (storagePath.startsWith('/api/pdf-files/')) {
+      const fileId = storagePath.slice('/api/pdf-files/'.length).trim();
+      const cloudFile = await fetchCloudFileFromFirestore(fileId);
+      if (!cloudFile) {
+        res.status(404).send('<h1>PDF Missing</h1><p>The uploaded PDF could not be located in cloud storage.</p>');
+        return;
+      }
+      const cleanOrig = String(paper.originalFilename || cloudFile.originalFilename || 'GTU-Question-Paper.pdf').replace(/"/g, '');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', String(cloudFile.buffer.length));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Disposition', `inline; filename="${cleanOrig}"`);
+      res.send(cloudFile.buffer);
+      return;
+    }
+
     if (storagePath.startsWith('/api/files/papers/')) {
       const filename = path.basename(storagePath.slice('/api/files/papers/'.length));
       const fullPath = path.join(PAPERS_DIR, filename);
@@ -925,6 +1167,23 @@ async function startServer() {
     const downloadName = `GTU-${code}-${session}-${year}.pdf`;
 
     const storagePath = String(paper.pdfStoragePath || '');
+    if (storagePath.startsWith('/api/pdf-files/')) {
+      const fileId = storagePath.slice('/api/pdf-files/'.length).trim();
+      const cloudFile = await fetchCloudFileFromFirestore(fileId);
+      if (!cloudFile) {
+        res.status(404).json({ error: 'PDF file is missing from cloud storage. Please contact an administrator.' });
+        return;
+      }
+      incrementDownloadStat(paperId);
+      void incrementDownloadStatFirestore(paperId);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', String(cloudFile.buffer.length));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
+      res.send(cloudFile.buffer);
+      return;
+    }
+
     if (storagePath.startsWith('/api/files/papers/')) {
       const filename = path.basename(storagePath.slice('/api/files/papers/'.length));
       const fullPath = path.join(PAPERS_DIR, filename);
@@ -933,6 +1192,7 @@ async function startServer() {
         return;
       }
       incrementDownloadStat(paperId);
+      void incrementDownloadStatFirestore(paperId);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
       res.sendFile(fullPath);
@@ -1257,6 +1517,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`DiplomaToppers server listening on http://0.0.0.0:${PORT}`);
+    void syncLocalDiskPdfsToCloudStorage();
   });
 }
 

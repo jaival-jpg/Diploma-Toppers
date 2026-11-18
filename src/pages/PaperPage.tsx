@@ -8,6 +8,7 @@ import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
+import { openLargeCloudPdfInBrowser, VERCEL_SAFE_DIRECT_BYTES } from '../services/cloudFileStorage';
 import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
 import { NotFoundPage } from './NotFoundPage';
 
@@ -214,6 +215,21 @@ export function PaperPage() {
                     href={`/api/papers/${paper.id}/view`}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={(e) => {
+                      if (
+                        paper.fileSize > VERCEL_SAFE_DIRECT_BYTES &&
+                        paper.pdfStoragePath.startsWith('/api/pdf-files/')
+                      ) {
+                        e.preventDefault();
+                        const fname = buildPaperDownloadFilename(
+                          subject.code,
+                          subject.name,
+                          paper.examSession,
+                          paper.examYear
+                        );
+                        void openLargeCloudPdfInBrowser(paper.id, paper.pdfStoragePath, fname, 'view');
+                      }
+                    }}
                     className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#1769D2] bg-white px-5 py-2.5 text-sm font-semibold text-[#1769D2] transition-colors hover:bg-blue-50 dark:border-blue-500 dark:bg-slate-800 dark:text-blue-400 dark:hover:bg-slate-700"
                   >
                     <ExternalLink className="h-4 w-4" />
@@ -222,7 +238,25 @@ export function PaperPage() {
 
                   <a
                     href={`/api/papers/${paper.id}/download`}
-                    onClick={() => setTimeout(() => void refresh(), 800)}
+                    onClick={(e) => {
+                      if (
+                        paper.fileSize > VERCEL_SAFE_DIRECT_BYTES &&
+                        paper.pdfStoragePath.startsWith('/api/pdf-files/')
+                      ) {
+                        e.preventDefault();
+                        const fname = buildPaperDownloadFilename(
+                          subject.code,
+                          subject.name,
+                          paper.examSession,
+                          paper.examYear
+                        );
+                        void openLargeCloudPdfInBrowser(paper.id, paper.pdfStoragePath, fname, 'download').then(() =>
+                          refresh()
+                        );
+                      } else {
+                        setTimeout(() => void refresh(), 800);
+                      }
+                    }}
                     className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-[#1769D2] px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0D47A1]"
                   >
                     <Download className="h-4 w-4" />

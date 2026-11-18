@@ -80,6 +80,32 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidCloudFile(data) {
+      return data.originalFilename is string && data.originalFilename.size() >= 1 && data.originalFilename.size() <= 255
+        && (
+          data.contentType == 'application/pdf'
+          || data.contentType == 'image/png'
+          || data.contentType == 'image/jpeg'
+          || data.contentType == 'image/jpg'
+          || data.contentType == 'image/webp'
+          || data.contentType == 'image/gif'
+        )
+        && data.fileSize is int && data.fileSize >= 1 && data.fileSize <= 26214400
+        && data.chunkCount is int && data.chunkCount >= 1 && data.chunkCount <= 60
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCloudFileChunk(data) {
+      return data.index is int && data.index >= 0 && data.index < 60
+        && data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 800000;
+    }
+
+    function isValidPaperStat(data) {
+      return isValidId(data.paperId)
+        && data.downloadCount is int && data.downloadCount >= 0
+        && data.updatedAt is timestamp;
+    }
+
     function isValidAdvertisement(data) {
       return data.title is string && data.title.size() >= 2 && data.title.size() <= 160
         && (
@@ -235,6 +261,49 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/branches/$(incoming().branchId))
         && exists(/databases/$(database)/documents/semesters/$(incoming().semesterId))
         && incoming().diff(existing()).affectedKeys().hasOnly(['subjectId', 'branchId', 'semesterId', 'title', 'examSession', 'examYear', 'pdfStoragePath', 'originalFilename', 'fileSize', 'slug', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(paperId);
+    }
+
+    match /paper_files/{fileId} {
+      allow get: if isValidId(fileId);
+      allow list: if true;
+      allow create: if isValidId(fileId)
+        && incoming().keys().hasAll(['originalFilename', 'contentType', 'fileSize', 'chunkCount', 'createdAt'])
+        && incoming().keys().hasOnly(['originalFilename', 'contentType', 'fileSize', 'chunkCount', 'createdAt'])
+        && isValidCloudFile(incoming())
+        && incoming().createdAt == request.time;
+      allow delete: if isValidId(fileId);
+
+      match /chunks/{chunkId} {
+        allow get: if isValidId(fileId) && isValidId(chunkId);
+        allow list: if true;
+        allow create: if isValidId(fileId)
+          && isValidId(chunkId)
+          && incoming().keys().hasAll(['index', 'dataBase64'])
+          && incoming().keys().hasOnly(['index', 'dataBase64'])
+          && isValidCloudFileChunk(incoming())
+          && exists(/databases/$(database)/documents/paper_files/$(fileId));
+        allow delete: if isValidId(fileId) && isValidId(chunkId);
+      }
+    }
+
+    match /paper_stats/{paperId} {
+      allow get: if isValidId(paperId);
+      allow list: if true;
+      allow create: if isValidId(paperId)
+        && incoming().paperId == paperId
+        && incoming().keys().hasAll(['paperId', 'downloadCount', 'updatedAt'])
+        && incoming().keys().hasOnly(['paperId', 'downloadCount', 'updatedAt'])
+        && isValidPaperStat(incoming())
+        && incoming().downloadCount == 1
+        && exists(/databases/$(database)/documents/papers/$(paperId))
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(paperId)
+        && isValidPaperStat(incoming())
+        && incoming().paperId == existing().paperId
+        && incoming().downloadCount == existing().downloadCount + 1
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['downloadCount', 'updatedAt']);
       allow delete: if isValidId(paperId);
     }
 

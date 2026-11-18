@@ -9,8 +9,9 @@ import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
 import { useCatalog } from '../contexts/CatalogContext';
+import { openLargeCloudPdfInBrowser, VERCEL_SAFE_DIRECT_BYTES } from '../services/cloudFileStorage';
 import type { Paper } from '../types/academic';
-import { formatFileSize } from '../utils/slugify';
+import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
 import { NotFoundPage } from './NotFoundPage';
 
 export function SubjectPage() {
@@ -143,7 +144,25 @@ export function SubjectPage() {
           {hasPdf ? (
             <a
               href={`/api/papers/${paper.id}/download`}
-              onClick={() => setTimeout(() => void refresh(), 800)}
+              onClick={(e) => {
+                if (
+                  paper.fileSize > VERCEL_SAFE_DIRECT_BYTES &&
+                  paper.pdfStoragePath.startsWith('/api/pdf-files/')
+                ) {
+                  e.preventDefault();
+                  const fname = buildPaperDownloadFilename(
+                    subject.code,
+                    subject.name,
+                    paper.examSession,
+                    paper.examYear
+                  );
+                  void openLargeCloudPdfInBrowser(paper.id, paper.pdfStoragePath, fname, 'download').then(() =>
+                    refresh()
+                  );
+                } else {
+                  setTimeout(() => void refresh(), 800);
+                }
+              }}
               className="inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#1769D2] shadow-sm transition-colors hover:bg-blue-50 whitespace-nowrap"
             >
               <Download className="h-4 w-4 text-[#1769D2]" />

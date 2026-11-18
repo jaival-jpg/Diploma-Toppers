@@ -174,6 +174,40 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["pageType", "pageReferenceId", "pageName", "pagePath", "seoTitle", "metaDescription", "canonicalUrl", "ogTitle", "ogDescription", "ogImageUrl", "robotsIndex", "robotsFollow", "isCustomized", "updatedAt"]
+    },
+    "CloudFile": {
+      "title": "CloudFile",
+      "description": "Metadata for uploaded PDF or banner asset stored in Firestore chunked cloud storage",
+      "type": "object",
+      "properties": {
+        "originalFilename": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "contentType": { "type": "string", "enum": ["application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"] },
+        "fileSize": { "type": "integer" },
+        "chunkCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["originalFilename", "contentType", "fileSize", "chunkCount", "createdAt"]
+    },
+    "CloudFileChunk": {
+      "title": "CloudFileChunk",
+      "description": "Ordered base64 binary chunk of a CloudFile document",
+      "type": "object",
+      "properties": {
+        "index": { "type": "integer" },
+        "dataBase64": { "type": "string", "minLength": 1, "maxLength": 800000 }
+      },
+      "required": ["index", "dataBase64"]
+    },
+    "PaperStat": {
+      "title": "PaperStat",
+      "description": "Persistent download counter for an academic paper",
+      "type": "object",
+      "properties": {
+        "paperId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "downloadCount": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["paperId", "downloadCount", "updatedAt"]
     }
   },
   "firestore": {
@@ -192,6 +226,18 @@
     "/papers/{paperId}": {
       "schema": { "$ref": "#/entities/Paper" },
       "description": "GTU question papers linked to subjects"
+    },
+    "/paper_files/{fileId}": {
+      "schema": { "$ref": "#/entities/CloudFile" },
+      "description": "Shared cloud file metadata for PDFs and custom banners"
+    },
+    "/paper_files/{fileId}/chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/CloudFileChunk" },
+      "description": "Chunked binary payloads belonging to a CloudFile"
+    },
+    "/paper_stats/{paperId}": {
+      "schema": { "$ref": "#/entities/PaperStat" },
+      "description": "Global persistent download counts per paper"
     },
     "/advertisements/{adId}": {
       "schema": { "$ref": "#/entities/Advertisement" },

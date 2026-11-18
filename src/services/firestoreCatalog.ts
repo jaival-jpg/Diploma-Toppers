@@ -24,6 +24,7 @@ import type {
   WebsiteSettingsMap,
 } from '../types/academic';
 import { sanitizeId, slugify } from '../utils/slugify';
+import { deleteCloudFileByPath } from './cloudFileStorage';
 import {
   buildBranchSeoDefaults,
   buildPaperSeoDefaults,
@@ -175,14 +176,35 @@ export async function initializeStandardGtuCatalog(): Promise<{ createdBranches:
 
 // ---- Download Count Merge Helper ----
 export async function fetchServerDownloadStats(): Promise<Record<string, number>> {
+  const merged: Record<string, number> = {};
+  try {
+    const snap = await getDocs(collection(db, 'paper_stats'));
+    for (const d of snap.docs) {
+      const data = d.data() as { downloadCount?: unknown };
+      if (typeof data.downloadCount === 'number' && data.downloadCount > 0) {
+        merged[d.id] = data.downloadCount;
+      }
+    }
+  } catch {
+    // Non-fatal fallback
+  }
+
   try {
     const res = await fetch('/api/stats/downloads');
-    if (!res.ok) return {};
-    const json = (await res.json()) as { counts?: Record<string, number> };
-    return json.counts || {};
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = (await res.json()) as { counts?: Record<string, number> };
+        for (const [k, v] of Object.entries(json.counts || {})) {
+          merged[k] = Math.max(merged[k] || 0, Number(v) || 0);
+        }
+      }
+    }
   } catch {
-    return {};
+    // Non-fatal fallback
   }
+
+  return merged;
 }
 
 // ---- Public Readers (strictly filter isActive == true) ----
@@ -938,18 +960,24 @@ export async function deletePaperRecord(
   try {
     await deleteDoc(doc(db, 'papers', paperId));
     await deleteSeoMetadataIfPresent('paper', paperId);
-    if (token && storagePath && storagePath.startsWith('/api/files/')) {
+    await deleteDoc(doc(db, 'paper_stats', paperId)).catch(() => {});
+
+    if (storagePath) {
       const remaining = await getAllPapers();
       const stillInUse = remaining.some((p) => p.id !== paperId && p.pdfStoragePath === storagePath);
       if (!stillInUse) {
-        await fetch('/api/admin/files', {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ filePath: storagePath }),
-        }).catch(() => {});
+        if (storagePath.startsWith('/api/pdf-files/')) {
+          await deleteCloudFileByPath(storagePath).catch(() => {});
+        } else if (token && storagePath.startsWith('/api/files/')) {
+          await fetch('/api/admin/files', {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ filePath: storagePath }),
+          }).catch(() => {});
+        }
       }
     }
   } catch (error) {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Code2, Edit2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
 import { deleteAdvertisement, saveAdvertisement } from '../../services/firestoreCatalog';
+import { uploadBannerToCloud } from '../../services/cloudFileStorage';
 import type { AdPlacement, AdType, Advertisement, BannerSize } from '../../types/academic';
 import { AdSlot } from '../AdSlot';
 
@@ -55,7 +55,6 @@ export function AdvertisementManager({
   onRefresh,
   initialCreate = false,
 }: AdvertisementManagerProps) {
-  const { getIdToken } = useAuth();
   const [showForm, setShowForm] = useState(initialCreate);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -129,28 +128,13 @@ export function AdvertisementManager({
     setError(null);
     setUploadingBanner(true);
     try {
-      const token = await getIdToken();
-      if (!token) throw new Error('Admin session expired. Please log in again.');
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/admin/upload-banner', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('Banner upload requires the backend server. You can paste an image URL directly.');
-      }
-      const json = (await res.json()) as { imageStoragePath?: string; error?: string };
-      if (!res.ok || !json.imageStoragePath) {
-        throw new Error(json.error || 'Banner upload failed.');
-      }
-      setImageStoragePath(json.imageStoragePath);
+      const uploaded = await uploadBannerToCloud(file);
+      setImageStoragePath(uploaded.imageStoragePath);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to upload banner image.');
     } finally {
       setUploadingBanner(false);
+      e.target.value = '';
     }
   };
 
