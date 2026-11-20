@@ -7,8 +7,11 @@ import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
+import { SeoRichContentSection } from '../components/SeoRichContentSection';
 import { useCatalog } from '../contexts/CatalogContext';
+import { useResolvedSeo } from '../hooks/useResolvedSeo';
 import { openLargeCloudPdfInBrowser, VERCEL_SAFE_DIRECT_BYTES } from '../services/cloudFileStorage';
+import { buildPaperSeoDefaults } from '../services/seoDefaults';
 import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
 import { NotFoundPage } from './NotFoundPage';
 
@@ -19,7 +22,7 @@ export function PaperPage() {
     subjectSlug: string;
     paperSlug: string;
   }>();
-  const { branches, semesters, subjects, papers, loading, refresh } = useCatalog();
+  const { branches, semesters, subjects, papers, settings, loading, refresh } = useCatalog();
   const [copied, setCopied] = useState(false);
 
   const semNumber = useMemo(() => {
@@ -44,6 +47,66 @@ export function PaperPage() {
     [papers, subject, paperSlug]
   );
 
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  const fallbackBranch = useMemo(
+    () =>
+      branch || {
+        id: branchSlug || 'branch',
+        name: 'GTU Diploma Branch',
+        code: '00',
+        slug: branchSlug || 'branch',
+        isActive: false,
+      },
+    [branch, branchSlug]
+  );
+  const fallbackSem = useMemo(
+    () =>
+      semester || {
+        id: semSlug || 'semester',
+        semesterNumber: Number.isNaN(semNumber) ? 1 : semNumber,
+        name: Number.isNaN(semNumber) ? 'Semester' : `Semester ${semNumber}`,
+        isActive: false,
+      },
+    [semester, semSlug, semNumber]
+  );
+  const fallbackSubj = useMemo(
+    () =>
+      subject || {
+        id: subjectSlug || 'subject',
+        name: 'GTU Subject',
+        code: '0000000',
+        slug: subjectSlug || 'subject',
+        isActive: false,
+      },
+    [subject, subjectSlug]
+  );
+  const fallbackPaper = useMemo(
+    () =>
+      paper || {
+        id: paperSlug || 'paper',
+        title: 'GTU Question Paper',
+        examSession: 'Summer' as const,
+        examYear: new Date().getFullYear(),
+        slug: paperSlug || 'paper',
+        isActive: false,
+        updatedAt: undefined,
+      },
+    [paper, paperSlug]
+  );
+  const descriptor = useMemo(
+    () =>
+      buildPaperSeoDefaults(
+        fallbackBranch,
+        fallbackSem,
+        fallbackSubj,
+        fallbackPaper,
+        settings.siteUrl,
+        origin
+      ),
+    [fallbackBranch, fallbackSem, fallbackSubj, fallbackPaper, settings.siteUrl, origin]
+  );
+  const resolvedSeo = useResolvedSeo(descriptor);
+
   const relatedPapers = useMemo(() => {
     if (!subject || !paper) return [];
     return papers
@@ -64,23 +127,15 @@ export function PaperPage() {
   }
 
   const canonicalPath = `/${branchSlug || ''}/${semSlug || ''}/${subjectSlug || ''}/${paperSlug || ''}`;
-  const pageTitle =
-    subject && paper
-      ? `${subject.name} (${subject.code}) GTU ${paper.examSession} ${paper.examYear} Question Paper PDF | DiplomaToppers`
-      : 'Question Paper | DiplomaToppers';
-  const pageDesc =
-    branch && semester && subject && paper
-      ? `View and download ${subject.name} (${subject.code}) GTU ${paper.examSession} ${paper.examYear} Diploma question paper PDF for ${branch.name} ${semester.name}.`
-      : 'GTU Diploma Question Paper PDF';
 
   const handleShare = async () => {
     const shareUrl = window.location.href;
-    const shareTitle = pageTitle;
+    const shareTitle = resolvedSeo.seoTitle;
     if (navigator.share) {
       try {
         await navigator.share({
           title: shareTitle,
-          text: pageDesc,
+          text: resolvedSeo.metaDescription,
           url: shareUrl,
         });
         return;
@@ -100,9 +155,11 @@ export function PaperPage() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-[#202124] dark:bg-[#0B1120] dark:text-slate-100">
       <SeoHead
-        title={pageTitle}
-        description={pageDesc}
+        title={resolvedSeo.seoTitle}
+        description={resolvedSeo.metaDescription}
         path={canonicalPath}
+        keywords={[resolvedSeo.focusKeyword, resolvedSeo.secondaryKeywords].filter(Boolean).join(', ')}
+        faqs={resolvedSeo.faqs}
         breadcrumbs={
           branch && semester && subject && paper
             ? [
@@ -148,8 +205,14 @@ export function PaperPage() {
               </div>
 
               <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[#202124] sm:text-3xl dark:text-white">
-                {paper.title}
+                {resolvedSeo.h1Heading}
               </h1>
+
+              {resolvedSeo.mainIntro && (
+                <p className="mt-3 text-sm leading-relaxed text-[#666666] sm:text-base dark:text-slate-300">
+                  {resolvedSeo.mainIntro}
+                </p>
+              )}
 
               <dl className="mt-6 grid grid-cols-1 gap-4 border-y border-slate-200 py-5 text-sm sm:grid-cols-2 lg:grid-cols-4 dark:border-slate-800">
                 <div>
@@ -336,6 +399,8 @@ export function PaperPage() {
                 </div>
               </section>
             )}
+
+            <SeoRichContentSection seo={resolvedSeo} />
           </>
         )}
       </main>

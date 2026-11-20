@@ -41,17 +41,38 @@ interface FirestoreValue {
   doubleValue?: number;
   booleanValue?: boolean;
   timestampValue?: string;
+  nullValue?: null;
+  arrayValue?: { values?: FirestoreValue[] };
+  mapValue?: { fields?: Record<string, FirestoreValue> };
+}
+
+function decodeValue(v?: FirestoreValue): unknown {
+  if (!v) return undefined;
+  if (v.stringValue !== undefined) return v.stringValue;
+  if (v.integerValue !== undefined) return Number(v.integerValue);
+  if (v.doubleValue !== undefined) return v.doubleValue;
+  if (v.booleanValue !== undefined) return v.booleanValue;
+  if (v.timestampValue !== undefined) return v.timestampValue;
+  if (v.nullValue !== undefined) return null;
+  if (v.arrayValue) {
+    return (v.arrayValue.values || [])
+      .map((item) => decodeValue(item))
+      .filter((item) => item !== undefined);
+  }
+  if (v.mapValue) {
+    return decodeFields(v.mapValue.fields);
+  }
+  return undefined;
 }
 
 function decodeFields(fields?: Record<string, FirestoreValue>): Record<string, unknown> {
   if (!fields) return {};
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fields)) {
-    if (v.stringValue !== undefined) out[k] = v.stringValue;
-    else if (v.integerValue !== undefined) out[k] = Number(v.integerValue);
-    else if (v.doubleValue !== undefined) out[k] = v.doubleValue;
-    else if (v.booleanValue !== undefined) out[k] = v.booleanValue;
-    else if (v.timestampValue !== undefined) out[k] = v.timestampValue;
+    const decoded = decodeValue(v);
+    if (decoded !== undefined) {
+      out[k] = decoded;
+    }
   }
   return out;
 }
@@ -196,11 +217,12 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
   const proto = (Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || 'https';
   const origin = `${proto}://${host}`;
 
-  const [branches, semesters, subjects, papers, settingsList, seoList] = await Promise.all([
+  const [branches, semesters, subjects, papers, blogs, settingsList, seoList] = await Promise.all([
     queryActive('branches'),
     queryActive('semesters'),
     queryActive('subjects'),
     queryActive('papers'),
+    queryActive('blog_posts'),
     listAll('website_settings'),
     listAll('seo_metadata'),
   ]);
@@ -234,6 +256,15 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
       lastmod: pickLastMod('seo-home-home'),
       changefreq: 'daily',
       priority: '1.0',
+    });
+  }
+
+  if (isIndexable('seo-blog-index')) {
+    urls.push({
+      loc: `${base}/blog`,
+      lastmod: pickLastMod('seo-blog-index'),
+      changefreq: 'weekly',
+      priority: '0.8',
     });
   }
 
@@ -305,6 +336,17 @@ export default async function handler(req: ServerlessReq, res: ServerlessRes) {
     urls.push({
       loc: `${base}/${b.slug}/semester-${sem.semesterNumber}/${subj.slug}/${pap.slug}`,
       lastmod: pickLastMod(seoId, pap.updatedAt),
+      changefreq: 'monthly',
+      priority: '0.7',
+    });
+  }
+
+  for (const post of blogs) {
+    const seoId = `seo-blog-${String(post.id)}`;
+    if (!post.slug || !isIndexable(seoId)) continue;
+    urls.push({
+      loc: `${base}/blog/${post.slug}`,
+      lastmod: pickLastMod(seoId, post.updatedAt || post.publishedAt),
       changefreq: 'monthly',
       priority: '0.7',
     });

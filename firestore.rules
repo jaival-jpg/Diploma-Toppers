@@ -80,6 +80,22 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidBlogPost(data) {
+      return data.title is string && data.title.size() >= 3 && data.title.size() <= 200
+        && isValidSlug(data.slug)
+        && data.excerpt is string && data.excerpt.size() >= 10 && data.excerpt.size() <= 500
+        && data.content is string && data.content.size() >= 20 && data.content.size() <= 25000
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 80
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 80
+        && data.coverImageUrl is string && data.coverImageUrl.size() <= 500
+        && data.coverImageAlt is string && data.coverImageAlt.size() <= 300
+        && (!('relatedBranchId' in data) || (data.relatedBranchId is string && data.relatedBranchId.size() <= 128))
+        && (!('publishedAt' in data) || (data.publishedAt is string && data.publishedAt.size() <= 40))
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidCloudFile(data) {
       return data.originalFilename is string && data.originalFilename.size() >= 1 && data.originalFilename.size() <= 255
         && (
@@ -153,6 +169,17 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidFaqList(listVal) {
+      return listVal is list
+        && listVal.size() <= 15
+        && (listVal.size() == 0 || (
+          listVal[0] is map
+          && listVal[0].keys().hasOnly(['question', 'answer'])
+          && listVal[0].question is string && listVal[0].question.size() <= 300
+          && listVal[0].answer is string && listVal[0].answer.size() <= 2000
+        ));
+    }
+
     function isValidSeoMetadata(data) {
       return (
           data.pageType == 'home'
@@ -160,13 +187,23 @@ service cloud.firestore {
           || data.pageType == 'semester'
           || data.pageType == 'subject'
           || data.pageType == 'paper'
+          || data.pageType == 'blog'
           || data.pageType == 'static'
         )
         && isValidId(data.pageReferenceId)
         && data.pageName is string && data.pageName.size() >= 1 && data.pageName.size() <= 200
         && data.pagePath is string && data.pagePath.size() >= 1 && data.pagePath.size() <= 300
+        && (!('focusKeyword' in data) || (data.focusKeyword is string && data.focusKeyword.size() <= 200))
+        && (!('secondaryKeywords' in data) || (data.secondaryKeywords is string && data.secondaryKeywords.size() <= 500))
         && data.seoTitle is string && data.seoTitle.size() <= 200
         && data.metaDescription is string && data.metaDescription.size() <= 400
+        && (!('h1Heading' in data) || (data.h1Heading is string && data.h1Heading.size() <= 220))
+        && (!('h2Headings' in data) || (data.h2Headings is list && data.h2Headings.size() <= 20))
+        && (!('h3Headings' in data) || (data.h3Headings is list && data.h3Headings.size() <= 30))
+        && (!('mainIntro' in data) || (data.mainIntro is string && data.mainIntro.size() <= 2000))
+        && (!('detailedContent' in data) || (data.detailedContent is string && data.detailedContent.size() <= 15000))
+        && (!('faqs' in data) || isValidFaqList(data.faqs))
+        && (!('imageAltText' in data) || (data.imageAltText is string && data.imageAltText.size() <= 300))
         && data.canonicalUrl is string && data.canonicalUrl.size() <= 500
         && data.ogTitle is string && data.ogTitle.size() <= 200
         && data.ogDescription is string && data.ogDescription.size() <= 400
@@ -264,6 +301,23 @@ service cloud.firestore {
       allow delete: if isValidId(paperId);
     }
 
+    match /blog_posts/{postId} {
+      allow get: if isValidId(postId);
+      allow list: if true;
+      allow create: if isValidId(postId)
+        && incoming().keys().hasAll(['title', 'slug', 'excerpt', 'content', 'category', 'authorName', 'coverImageUrl', 'coverImageAlt', 'isActive', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['title', 'slug', 'excerpt', 'content', 'category', 'authorName', 'coverImageUrl', 'coverImageAlt', 'relatedBranchId', 'publishedAt', 'isActive', 'createdAt', 'updatedAt'])
+        && isValidBlogPost(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(postId)
+        && isValidBlogPost(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'slug', 'excerpt', 'content', 'category', 'authorName', 'coverImageUrl', 'coverImageAlt', 'relatedBranchId', 'publishedAt', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(postId);
+    }
+
     match /paper_files/{fileId} {
       allow get: if isValidId(fileId);
       allow list: if true;
@@ -346,7 +400,7 @@ service cloud.firestore {
       allow list: if true;
       allow create: if isValidId(seoId)
         && incoming().keys().hasAll(['pageType', 'pageReferenceId', 'pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt'])
-        && incoming().keys().hasOnly(['pageType', 'pageReferenceId', 'pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt'])
+        && incoming().keys().hasOnly(['pageType', 'pageReferenceId', 'pageName', 'pagePath', 'focusKeyword', 'secondaryKeywords', 'seoTitle', 'metaDescription', 'h1Heading', 'h2Headings', 'h3Headings', 'mainIntro', 'detailedContent', 'faqs', 'imageAltText', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt'])
         && isValidSeoMetadata(incoming())
         && incoming().updatedAt == request.time;
       allow update: if isValidId(seoId)
@@ -354,7 +408,7 @@ service cloud.firestore {
         && incoming().pageType == existing().pageType
         && incoming().pageReferenceId == existing().pageReferenceId
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['pageName', 'pagePath', 'seoTitle', 'metaDescription', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['pageName', 'pagePath', 'focusKeyword', 'secondaryKeywords', 'seoTitle', 'metaDescription', 'h1Heading', 'h2Headings', 'h3Headings', 'mainIntro', 'detailedContent', 'faqs', 'imageAltText', 'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImageUrl', 'robotsIndex', 'robotsFollow', 'isCustomized', 'updatedAt']);
       allow delete: if isValidId(seoId);
     }
 

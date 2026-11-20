@@ -5,7 +5,7 @@ import { useCatalog } from '../contexts/CatalogContext';
 import { STANDARD_GTU_BRANCHES } from '../services/firestoreCatalog';
 
 export interface RelatedContentSectionProps {
-  pageType?: 'home' | 'branch' | 'semester' | 'subject' | 'paper' | 'static';
+  pageType?: 'home' | 'branch' | 'semester' | 'subject' | 'paper' | 'blog' | 'static';
   currentBranchId?: string;
   currentSemesterId?: string;
   currentSubjectId?: string;
@@ -27,7 +27,7 @@ export function RelatedContentSection({
   currentSubjectCode,
   currentPaperId,
 }: RelatedContentSectionProps) {
-  const { branches, semesters, subjects, papers } = useCatalog();
+  const { branches, semesters, subjects, papers, blogs } = useCatalog();
 
   const effectiveBranches = useMemo(
     () => (branches.length > 0 ? branches : STANDARD_GTU_BRANCHES),
@@ -229,8 +229,16 @@ export function RelatedContentSection({
     return 'Explore verified GTU Diploma Engineering previous year Summer and Winter question papers across all branches, semesters 1 to 6, and active subject codes on DiplomaToppers.';
   }, [pageType, currentBranch, currentSemester, currentSubject]);
 
+  const recentBlogLinks = blogs.slice(0, 2).map((b) => ({
+    label: b.title,
+    to: `/blog/${b.slug}`,
+    external: false,
+  }));
+
   const otherSiteLinks: Array<{ label: string; to: string; external?: boolean }> = [
     { label: 'All GTU Diploma Branches', to: '/' },
+    { label: 'GTU Study Blog & Guides', to: '/blog' },
+    ...recentBlogLinks,
     { label: 'About DiplomaToppers', to: '/about' },
     { label: 'Request Missing Paper / Contact', to: '/contact' },
     { label: 'Privacy Policy', to: '/privacy-policy' },

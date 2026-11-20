@@ -8,8 +8,11 @@ import { GtuSearchInsights } from '../components/GtuSearchInsights';
 import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
+import { SeoRichContentSection } from '../components/SeoRichContentSection';
 import { useCatalog } from '../contexts/CatalogContext';
+import { useResolvedSeo } from '../hooks/useResolvedSeo';
 import { openLargeCloudPdfInBrowser, VERCEL_SAFE_DIRECT_BYTES } from '../services/cloudFileStorage';
+import { buildSubjectSeoDefaults } from '../services/seoDefaults';
 import type { Paper } from '../types/academic';
 import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
 import { NotFoundPage } from './NotFoundPage';
@@ -20,7 +23,7 @@ export function SubjectPage() {
     semSlug: string;
     subjectSlug: string;
   }>();
-  const { branches, semesters, subjects, papers, loading, refresh } = useCatalog();
+  const { branches, semesters, subjects, papers, settings, loading, refresh } = useCatalog();
 
   const [sessionFilter, setSessionFilter] = useState<'ALL' | 'Summer' | 'Winter'>('ALL');
   const [yearFilter, setYearFilter] = useState<string>('ALL');
@@ -43,6 +46,55 @@ export function SubjectPage() {
         : undefined,
     [subjects, branch, semester, subjectSlug]
   );
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  const fallbackBranch = useMemo(
+    () =>
+      branch || {
+        id: branchSlug || 'branch',
+        name: 'GTU Diploma Branch',
+        code: '00',
+        slug: branchSlug || 'branch',
+        isActive: false,
+      },
+    [branch, branchSlug]
+  );
+  const fallbackSem = useMemo(
+    () =>
+      semester || {
+        id: semSlug || 'semester',
+        semesterNumber: Number.isNaN(semNumber) ? 1 : semNumber,
+        name: Number.isNaN(semNumber) ? 'Semester' : `Semester ${semNumber}`,
+        isActive: false,
+      },
+    [semester, semSlug, semNumber]
+  );
+  const fallbackSubj = useMemo(
+    () =>
+      subject || {
+        id: subjectSlug || 'subject',
+        name: 'GTU Subject',
+        code: '0000000',
+        slug: subjectSlug || 'subject',
+        description: '',
+        isActive: false,
+        updatedAt: undefined,
+      },
+    [subject, subjectSlug]
+  );
+  const descriptor = useMemo(
+    () =>
+      buildSubjectSeoDefaults(
+        fallbackBranch,
+        fallbackSem,
+        fallbackSubj,
+        settings.siteUrl,
+        origin,
+        { papers }
+      ),
+    [fallbackBranch, fallbackSem, fallbackSubj, settings.siteUrl, origin, papers]
+  );
+  const resolvedSeo = useResolvedSeo(descriptor);
 
   const subjectPapers = useMemo(() => {
     if (!subject) return [];
@@ -181,9 +233,11 @@ export function SubjectPage() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-[#202124] dark:bg-[#0B1120] dark:text-slate-100">
       <SeoHead
-        title={pageTitle}
-        description={pageDesc}
+        title={resolvedSeo.seoTitle}
+        description={resolvedSeo.metaDescription}
         path={`/${branchSlug || ''}/${semSlug || ''}/${subjectSlug || ''}`}
+        keywords={[resolvedSeo.focusKeyword, resolvedSeo.secondaryKeywords].filter(Boolean).join(', ')}
+        faqs={resolvedSeo.faqs}
         breadcrumbs={
           branch && semester && subject
             ? [
@@ -223,13 +277,11 @@ export function SubjectPage() {
                 <span>{semester.name}</span>
               </div>
               <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl dark:text-white">
-                {subject.name}
+                {resolvedSeo.h1Heading}
               </h1>
-              {subject.description && (
-                <p className="mt-3 max-w-3xl text-base text-[#666666] dark:text-slate-400">
-                  {subject.description}
-                </p>
-              )}
+              <p className="mt-3 max-w-3xl text-base text-[#666666] dark:text-slate-400">
+                {resolvedSeo.mainIntro}
+              </p>
             </div>
 
             {/* Filter & Search Bar */}
@@ -414,6 +466,8 @@ export function SubjectPage() {
               subjectName={subject.name}
               subjectCode={subject.code}
             />
+
+            <SeoRichContentSection seo={resolvedSeo} />
           </>
         )}
       </main>

@@ -88,6 +88,23 @@ export interface Paper {
   updatedAt?: string;
 }
 
+export interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt: string;
+  content: string;
+  category: string;
+  authorName: string;
+  coverImageUrl: string;
+  coverImageAlt: string;
+  relatedBranchId?: string;
+  isActive: boolean;
+  publishedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Advertisement {
   id: string;
   title: string;
@@ -124,7 +141,19 @@ export interface GtuInsightsResponse {
   sources: GroundingSource[];
 }
 
-export type SeoPageType = 'home' | 'branch' | 'semester' | 'subject' | 'paper' | 'static';
+export type SeoPageType =
+  | 'home'
+  | 'branch'
+  | 'semester'
+  | 'subject'
+  | 'paper'
+  | 'blog'
+  | 'static';
+
+export interface SeoFaqItem {
+  question: string;
+  answer: string;
+}
 
 export interface SeoMetadata {
   id: string;
@@ -132,8 +161,17 @@ export interface SeoMetadata {
   pageReferenceId: string;
   pageName: string;
   pagePath: string;
+  focusKeyword: string;
+  secondaryKeywords: string;
   seoTitle: string;
   metaDescription: string;
+  h1Heading: string;
+  h2Headings: string[];
+  h3Headings: string[];
+  mainIntro: string;
+  detailedContent: string;
+  faqs: SeoFaqItem[];
+  imageAltText: string;
   canonicalUrl: string;
   ogTitle: string;
   ogDescription: string;
@@ -142,4 +180,26 @@ export interface SeoMetadata {
   robotsFollow: boolean;
   isCustomized: boolean;
   updatedAt?: string;
+}
+
+export type SeoCheckStatus = 'pass' | 'warning' | 'fail';
+
+export interface SeoCheckItem {
+  id: string;
+  label: string;
+  status: SeoCheckStatus;
+  detail: string;
+}
+
+export interface SeoAnalyzerReport {
+  passedCount: number;
+  warningCount: number;
+  failedCount: number;
+  totalChecks: number;
+  wordCount: number;
+  keywordInTitle: boolean;
+  keywordInDescription: boolean;
+  keywordInH1: boolean;
+  keywordInContent: boolean;
+  checks: SeoCheckItem[];
 }

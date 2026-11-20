@@ -14,13 +14,29 @@ import { GtuSearchInsights } from '../components/GtuSearchInsights';
 import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
+import { SeoRichContentSection } from '../components/SeoRichContentSection';
 import { useCatalog } from '../contexts/CatalogContext';
+import { useResolvedSeo } from '../hooks/useResolvedSeo';
 import { STANDARD_GTU_BRANCHES } from '../services/firestoreCatalog';
+import { buildHomeSeoDefaults } from '../services/seoDefaults';
 import { openLargeCloudPdfInBrowser, VERCEL_SAFE_DIRECT_BYTES } from '../services/cloudFileStorage';
 import { buildPaperDownloadFilename, formatFileSize } from '../utils/slugify';
 
 export function HomePage() {
-  const { branches, semesters, subjects, papers, settings, loading, error, refresh } = useCatalog();
+  const { branches, semesters, subjects, papers, blogs, settings, loading, error, refresh } = useCatalog();
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  const homeDescriptor = useMemo(
+    () =>
+      buildHomeSeoDefaults(settings.siteUrl, origin, settings.siteDescription, {
+        branchCount: branches.length,
+        subjectCount: subjects.length,
+        paperCount: papers.length,
+        branchNames: branches.map((b) => b.name.replace(/^Diploma\s+/i, '')),
+      }),
+    [settings.siteUrl, settings.siteDescription, origin, branches, subjects.length, papers.length]
+  );
+  const resolvedSeo = useResolvedSeo(homeDescriptor);
 
   const branchMap = useMemo(() => new Map(branches.map((b) => [b.id, b])), [branches]);
   const semesterMap = useMemo(() => new Map(semesters.map((s) => [s.id, s])), [semesters]);
@@ -144,12 +160,11 @@ export function HomePage() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-[#202124] dark:bg-[#0B1120] dark:text-slate-100">
       <SeoHead
-        title="GTU Diploma Old Question Papers | DiplomaToppers"
-        description={
-          settings.siteDescription ||
-          'Download GTU Diploma Engineering previous year Summer and Winter question papers organized by branch, semester, and subject on DiplomaToppers.'
-        }
+        title={resolvedSeo.seoTitle}
+        description={resolvedSeo.metaDescription}
         path="/"
+        keywords={[resolvedSeo.focusKeyword, resolvedSeo.secondaryKeywords].filter(Boolean).join(', ')}
+        faqs={resolvedSeo.faqs}
       />
       <Header />
 
@@ -162,10 +177,10 @@ export function HomePage() {
                 Gujarat Technological University · Diploma Engineering
               </p>
               <h1 className="mt-2 text-balance text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl lg:text-5xl dark:text-white">
-                GTU Diploma Old Question Papers
+                {resolvedSeo.h1Heading}
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-relaxed text-[#666666] sm:text-lg dark:text-slate-300">
-                Browse verified GTU Diploma Summer and Winter examination question papers organized cleanly by engineering branch, semester, and subject code.
+                {resolvedSeo.mainIntro}
               </p>
 
               <div className="mt-7 max-w-2xl">
@@ -365,12 +380,67 @@ export function HomePage() {
           </section>
         )}
 
+        {/* Latest Study Guides from Blog */}
+        {blogs.length > 0 && (
+          <section className="border-t border-slate-100 py-12 sm:py-16 dark:border-slate-800/80">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-[#202124] sm:text-3xl dark:text-white">
+                    GTU Exam Preparation Blog
+                  </h2>
+                  <p className="mt-1.5 text-sm text-[#666666] dark:text-slate-400">
+                    Study methods, paper-solving strategies, and semester guidance for Diploma students.
+                  </p>
+                </div>
+                <Link
+                  to="/blog"
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1769D2] hover:underline dark:text-blue-400"
+                >
+                  <span>View All Guides</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                {blogs.slice(0, 3).map((post) => (
+                  <Link
+                    key={post.id}
+                    to={`/blog/${post.slug}`}
+                    className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 transition-colors hover:border-[#1769D2] dark:border-slate-800 dark:bg-slate-900"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-[#1769D2] dark:text-blue-400">
+                        {post.category || 'Study Guide'}
+                      </div>
+                      <h3 className="mt-1.5 text-base font-bold text-[#202124] group-hover:text-[#1769D2] dark:text-white dark:group-hover:text-blue-400">
+                        {post.title}
+                      </h3>
+                      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-[#666666] dark:text-slate-400">
+                        {post.excerpt}
+                      </p>
+                    </div>
+                    <div className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-[#1769D2] dark:text-blue-400">
+                      <span>Read Guide</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Live GTU Search Grounding */}
         <section className="border-t border-slate-100 py-12 sm:py-16 dark:border-slate-800/80">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <GtuSearchInsights mode="global" />
           </div>
         </section>
+
+        {/* On-Page SEO Study Guide & FAQs */}
+        <div className="mx-auto max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
+          <SeoRichContentSection seo={resolvedSeo} />
+        </div>
       </main>
 
       <RelatedContentSection pageType="home" />

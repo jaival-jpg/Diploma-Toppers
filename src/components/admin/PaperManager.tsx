@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, ExternalLink, FileText, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { CheckCircle2, Edit2, ExternalLink, FileText, Globe, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   deletePaperRecord,
@@ -7,7 +7,8 @@ import {
   savePaperAcrossAllBranches,
 } from '../../services/firestoreCatalog';
 import { uploadPdfToCloud } from '../../services/cloudFileStorage';
-import type { Branch, ExamSession, Paper, Semester, Subject } from '../../types/academic';
+import { buildPaperSeoDefaults, type SeoPageDescriptor } from '../../services/seoDefaults';
+import type { Branch, ExamSession, Paper, Semester, Subject, WebsiteSettingsMap } from '../../types/academic';
 import { formatFileSize } from '../../utils/slugify';
 
 interface PaperManagerProps {
@@ -15,7 +16,9 @@ interface PaperManagerProps {
   semesters: Semester[];
   subjects: Subject[];
   papers: Paper[];
+  settings?: WebsiteSettingsMap;
   onRefresh: () => Promise<void>;
+  onOpenSeoEditor?: (descriptor: SeoPageDescriptor) => void;
   initialCreate?: boolean;
 }
 
@@ -33,7 +36,9 @@ export function PaperManager({
   semesters,
   subjects,
   papers,
+  settings,
   onRefresh,
+  onOpenSeoEditor,
   initialCreate = false,
 }: PaperManagerProps) {
   const { getIdToken } = useAuth();
@@ -795,6 +800,28 @@ export function PaperManager({
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-2">
+                        {onOpenSeoEditor && br && sem && subj && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onOpenSeoEditor(
+                                buildPaperSeoDefaults(
+                                  br,
+                                  sem,
+                                  subj,
+                                  p,
+                                  settings?.siteUrl,
+                                  typeof window !== 'undefined' ? window.location.origin : undefined
+                                )
+                              )
+                            }
+                            title="Edit SEO & On-Page Content"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-[#1769D2] hover:border-[#1769D2] dark:border-slate-700 dark:text-blue-400"
+                          >
+                            <Globe className="h-3.5 w-3.5" />
+                            <span>SEO</span>
+                          </button>
+                        )}
                         <a
                           href={`/api/papers/${p.id}/view`}
                           target="_blank"

@@ -11,6 +11,7 @@ export function Header() {
   const navLinks = [
     { label: 'Branches', href: '/#branches' },
     { label: 'Recent Papers', href: '/#recent-papers' },
+    { label: 'Study Blog', href: '/blog' },
     { label: 'GTU Updates', href: '/#gtu-updates' },
     { label: 'About', href: '/about' },
   ];

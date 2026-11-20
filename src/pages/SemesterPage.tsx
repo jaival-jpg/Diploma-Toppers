@@ -7,12 +7,15 @@ import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
+import { SeoRichContentSection } from '../components/SeoRichContentSection';
 import { useCatalog } from '../contexts/CatalogContext';
+import { useResolvedSeo } from '../hooks/useResolvedSeo';
+import { buildSemesterSeoDefaults } from '../services/seoDefaults';
 import { NotFoundPage } from './NotFoundPage';
 
 export function SemesterPage() {
   const { branchSlug, semSlug } = useParams<{ branchSlug: string; semSlug: string }>();
-  const { branches, semesters, subjects, papers, loading } = useCatalog();
+  const { branches, semesters, subjects, papers, settings, loading } = useCatalog();
 
   const semNumber = useMemo(() => {
     const match = (semSlug || '').match(/^semester-(\d+)$/);
@@ -28,6 +31,39 @@ export function SemesterPage() {
     if (!branch || Number.isNaN(semNumber)) return undefined;
     return semesters.find((s) => s.branchId === branch.id && s.semesterNumber === semNumber);
   }, [semesters, branch, semNumber]);
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  const fallbackBranch = useMemo(
+    () =>
+      branch || {
+        id: branchSlug || 'branch',
+        name: 'GTU Diploma Branch',
+        code: '00',
+        slug: branchSlug || 'branch',
+        isActive: false,
+      },
+    [branch, branchSlug]
+  );
+  const fallbackSem = useMemo(
+    () =>
+      semester || {
+        id: semSlug || 'semester',
+        semesterNumber: Number.isNaN(semNumber) ? 1 : semNumber,
+        name: Number.isNaN(semNumber) ? 'Semester' : `Semester ${semNumber}`,
+        isActive: false,
+        updatedAt: undefined,
+      },
+    [semester, semSlug, semNumber]
+  );
+  const descriptor = useMemo(
+    () =>
+      buildSemesterSeoDefaults(fallbackBranch, fallbackSem, settings.siteUrl, origin, {
+        subjects,
+        papers,
+      }),
+    [fallbackBranch, fallbackSem, settings.siteUrl, origin, subjects, papers]
+  );
+  const resolvedSeo = useResolvedSeo(descriptor);
 
   const semSubjects = useMemo(() => {
     if (!branch || !semester) return [];
@@ -53,22 +89,14 @@ export function SemesterPage() {
     return <NotFoundPage message="The requested semester page could not be found." />;
   }
 
-  const shortBranch = branch ? branch.name.replace(/^Diploma\s+/i, '') : '';
-  const pageTitle =
-    branch && semester
-      ? `GTU ${shortBranch} ${semester.name} Papers | DiplomaToppers`
-      : 'Semester | DiplomaToppers';
-  const pageDesc =
-    branch && semester
-      ? `Browse all active subjects and GTU Summer & Winter question papers for ${branch.name} ${semester.name}.`
-      : 'GTU Diploma Semester Subjects';
-
   return (
     <div className="flex min-h-screen flex-col bg-white text-[#202124] dark:bg-[#0B1120] dark:text-slate-100">
       <SeoHead
-        title={pageTitle}
-        description={pageDesc}
+        title={resolvedSeo.seoTitle}
+        description={resolvedSeo.metaDescription}
         path={`/${branchSlug || ''}/${semSlug || ''}`}
+        keywords={[resolvedSeo.focusKeyword, resolvedSeo.secondaryKeywords].filter(Boolean).join(', ')}
+        faqs={resolvedSeo.faqs}
         breadcrumbs={
           branch && semester
             ? [
@@ -106,10 +134,10 @@ export function SemesterPage() {
                 {branch.name} · Branch Code {branch.code}
               </div>
               <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl dark:text-white">
-                {semester.name} Subjects
+                {resolvedSeo.h1Heading}
               </h1>
               <p className="mt-2 text-base text-[#666666] dark:text-slate-400">
-                Select a subject below to view and download GTU Summer and Winter examination question papers.
+                {resolvedSeo.mainIntro}
               </p>
             </div>
 
@@ -220,6 +248,8 @@ export function SemesterPage() {
                 </div>
               </section>
             )}
+
+            <SeoRichContentSection seo={resolvedSeo} />
           </>
         )}
       </main>

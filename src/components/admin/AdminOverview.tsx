@@ -1,6 +1,6 @@
-import { ArrowRight, BookOpen, FileText, GitBranch, Globe, Layers, Megaphone } from 'lucide-react';
+import { ArrowRight, BookOpen, FileText, GitBranch, Globe, Layers, Megaphone, Newspaper } from 'lucide-react';
 import { AdSlot } from '../AdSlot';
-import type { Advertisement, Branch, Paper, Semester, Subject } from '../../types/academic';
+import type { Advertisement, BlogPost, Branch, Paper, Semester, Subject } from '../../types/academic';
 import { formatFileSize } from '../../utils/slugify';
 
 export type AdminSection =
@@ -9,6 +9,7 @@ export type AdminSection =
   | 'semesters'
   | 'subjects'
   | 'papers'
+  | 'blogs'
   | 'ads'
   | 'seo'
   | 'settings';
@@ -18,6 +19,7 @@ interface AdminOverviewProps {
   semesters: Semester[];
   subjects: Subject[];
   papers: Paper[];
+  blogs?: BlogPost[];
   ads: Advertisement[];
   isSuperAdmin: boolean;
   onNavigate: (section: AdminSection, openCreate?: boolean) => void;
@@ -28,6 +30,7 @@ export function AdminOverview({
   semesters,
   subjects,
   papers,
+  blogs = [],
   ads,
   isSuperAdmin,
   onNavigate,
@@ -44,6 +47,7 @@ export function AdminOverview({
     { label: 'Total Semesters', value: semesters.length },
     { label: 'Total Subjects', value: subjects.length },
     { label: 'Uploaded Papers', value: papers.length },
+    { label: 'Blog Articles', value: blogs.length },
     { label: 'Active Ads', value: activeAdsCount },
   ];
 
@@ -79,6 +83,12 @@ export function AdminOverview({
       icon: FileText,
     },
     {
+      title: 'Write Study Blog Post',
+      description: 'Publish GTU exam strategy articles & study guides under /blog.',
+      section: 'blogs',
+      icon: Newspaper,
+    },
+    {
       title: 'Manage Advertisements',
       description: 'Configure Adsterra Banner, Native Banner, Popunder, Social Bar, and Smartlink ads.',
       section: 'ads',
@@ -86,8 +96,8 @@ export function AdminOverview({
       superOnly: true,
     },
     {
-      title: 'SEO Management',
-      description: 'Edit titles, meta descriptions, canonical URLs, and preview Google search snippets.',
+      title: 'SEO & Content Manager',
+      description: 'Edit focus keywords, headings, study content, FAQs, and run the On-Page SEO analyzer.',
       section: 'seo',
       icon: Globe,
     },
@@ -96,7 +106,7 @@ export function AdminOverview({
   return (
     <div className="space-y-8">
       {/* Live Database Statistics */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map((st) => (
           <div
             key={st.label}

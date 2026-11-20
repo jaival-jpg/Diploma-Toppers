@@ -7,17 +7,45 @@ import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
 import { RelatedContentSection } from '../components/RelatedContentSection';
 import { SeoHead } from '../components/SeoHead';
+import { SeoRichContentSection } from '../components/SeoRichContentSection';
 import { useCatalog } from '../contexts/CatalogContext';
+import { useResolvedSeo } from '../hooks/useResolvedSeo';
+import { buildBranchSeoDefaults } from '../services/seoDefaults';
 import { NotFoundPage } from './NotFoundPage';
 
 export function BranchPage() {
   const { branchSlug } = useParams<{ branchSlug: string }>();
-  const { branches, semesters, subjects, papers, loading } = useCatalog();
+  const { branches, semesters, subjects, papers, settings, loading } = useCatalog();
 
   const branch = useMemo(
     () => branches.find((b) => b.slug === branchSlug),
     [branches, branchSlug]
   );
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  const fallbackBranch = useMemo(
+    () =>
+      branch || {
+        id: branchSlug || 'branch',
+        name: 'GTU Diploma Branch',
+        code: '00',
+        slug: branchSlug || 'branch',
+        description: '',
+        isActive: false,
+        updatedAt: undefined,
+      },
+    [branch, branchSlug]
+  );
+  const descriptor = useMemo(
+    () =>
+      buildBranchSeoDefaults(fallbackBranch, settings.siteUrl, origin, {
+        semesters,
+        subjects,
+        papers,
+      }),
+    [fallbackBranch, settings.siteUrl, origin, semesters, subjects, papers]
+  );
+  const resolvedSeo = useResolvedSeo(descriptor);
 
   const branchSemesters = useMemo(() => {
     if (!branch) return [];
@@ -43,18 +71,14 @@ export function BranchPage() {
     return <NotFoundPage message="The requested engineering branch could not be found." />;
   }
 
-  const branchTitle = branch ? `GTU ${branch.name} Old Papers | DiplomaToppers` : 'Branch | DiplomaToppers';
-  const branchDesc = branch
-    ? branch.description ||
-      `Download GTU ${branch.name} (Code ${branch.code}) Semester 1 to 6 previous year Summer and Winter question papers.`
-    : 'GTU Diploma Engineering Branch Question Papers';
-
   return (
     <div className="flex min-h-screen flex-col bg-white text-[#202124] dark:bg-[#0B1120] dark:text-slate-100">
       <SeoHead
-        title={branchTitle}
-        description={branchDesc}
+        title={resolvedSeo.seoTitle}
+        description={resolvedSeo.metaDescription}
         path={`/${branchSlug || ''}`}
+        keywords={[resolvedSeo.focusKeyword, resolvedSeo.secondaryKeywords].filter(Boolean).join(', ')}
+        faqs={resolvedSeo.faqs}
         breadcrumbs={
           branch
             ? [
@@ -85,10 +109,10 @@ export function BranchPage() {
                 Branch Code: {branch.code}
               </div>
               <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-[#202124] sm:text-4xl dark:text-white">
-                {branch.name}
+                {resolvedSeo.h1Heading}
               </h1>
               <p className="mt-3 max-w-3xl text-base text-[#666666] dark:text-slate-400">
-                {branchDesc}
+                {resolvedSeo.mainIntro}
               </p>
             </div>
 
@@ -211,6 +235,8 @@ export function BranchPage() {
                 </div>
               </section>
             )}
+
+            <SeoRichContentSection seo={resolvedSeo} />
           </>
         )}
       </main>

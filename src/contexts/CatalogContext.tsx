@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
   getActiveAdvertisements,
+  getActiveBlogPosts,
   getActiveBranches,
   getActivePapers,
   getActiveSemesters,
@@ -12,6 +13,7 @@ import {
 } from '../services/firestoreCatalog';
 import type {
   Advertisement,
+  BlogPost,
   Branch,
   Paper,
   Semester,
@@ -25,6 +27,7 @@ interface CatalogContextValue {
   semesters: Semester[];
   subjects: Subject[];
   papers: Paper[];
+  blogs: BlogPost[];
   ads: Advertisement[];
   seoMetadata: SeoMetadata[];
   settings: WebsiteSettingsMap;
@@ -38,6 +41,7 @@ const CatalogContext = createContext<CatalogContextValue>({
   semesters: [],
   subjects: [],
   papers: [],
+  blogs: [],
   ads: [],
   seoMetadata: [],
   settings: {},
@@ -51,6 +55,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [blogs, setBlogs] = useState<BlogPost[]>([]);
   const [ads, setAds] = useState<Advertisement[]>([]);
   const [seoMetadata, setSeoMetadata] = useState<SeoMetadata[]>([]);
   const [settings, setSettings] = useState<WebsiteSettingsMap>({});
@@ -61,11 +66,12 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      let [b, sem, subj, pap, adList, seoList, siteSettings] = await Promise.all([
+      let [b, sem, subj, pap, blogList, adList, seoList, siteSettings] = await Promise.all([
         getActiveBranches(),
         getActiveSemesters(),
         getActiveSubjects(),
         getActivePapers(),
+        getActiveBlogPosts().catch(() => [] as BlogPost[]),
         getActiveAdvertisements(),
         getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
         getWebsiteSettings(),
@@ -88,6 +94,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
       setSemesters(sem);
       setSubjects(subj);
       setPapers(pap);
+      setBlogs(blogList);
       setAds(adList);
       setSeoMetadata(seoList);
       setSettings(siteSettings);
@@ -113,6 +120,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         semesters,
         subjects,
         papers,
+        blogs,
         ads,
         seoMetadata,
         settings,

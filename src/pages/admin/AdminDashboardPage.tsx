@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  CheckCircle2,
   ExternalLink,
   FileText,
   GitBranch,
@@ -12,6 +13,7 @@ import {
   Megaphone,
   Menu,
   Moon,
+  Newspaper,
   Settings,
   Sun,
   X,
@@ -19,9 +21,11 @@ import {
 import { SeoHead } from '../../components/SeoHead';
 import { AdminOverview, type AdminSection } from '../../components/admin/AdminOverview';
 import { AdvertisementManager } from '../../components/admin/AdvertisementManager';
+import { BlogManager } from '../../components/admin/BlogManager';
 import { BranchManager } from '../../components/admin/BranchManager';
 import { PaperManager } from '../../components/admin/PaperManager';
 import { SemesterManager } from '../../components/admin/SemesterManager';
+import { SeoEditorPanel } from '../../components/admin/SeoEditorModal';
 import { SeoManagementManager } from '../../components/admin/SeoManagementManager';
 import { SubjectManager } from '../../components/admin/SubjectManager';
 import { WebsiteSettingsManager } from '../../components/admin/WebsiteSettingsManager';
@@ -30,6 +34,7 @@ import { useCatalog } from '../../contexts/CatalogContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import {
   getAllAdvertisements,
+  getAllBlogPosts,
   getAllBranches,
   getAllPapers,
   getAllSemesters,
@@ -38,7 +43,21 @@ import {
   getWebsiteSettings,
   initializeStandardGtuCatalog,
 } from '../../services/firestoreCatalog';
-import type { Advertisement, Branch, Paper, Semester, SeoMetadata, Subject, WebsiteSettingsMap } from '../../types/academic';
+import {
+  collectCatalogPageDescriptors,
+  mergeDescriptorWithSeo,
+  type SeoPageDescriptor,
+} from '../../services/seoDefaults';
+import type {
+  Advertisement,
+  BlogPost,
+  Branch,
+  Paper,
+  Semester,
+  SeoMetadata,
+  Subject,
+  WebsiteSettingsMap,
+} from '../../types/academic';
 
 export function AdminDashboardPage() {
   const { authReady, isAdmin, isSuperAdmin, logout } = useAuth();
@@ -49,11 +68,14 @@ export function AdminDashboardPage() {
   const [section, setSection] = useState<AdminSection>('overview');
   const [openCreateOnSwitch, setOpenCreateOnSwitch] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [modalSeoDescriptor, setModalSeoDescriptor] = useState<SeoPageDescriptor | null>(null);
+  const [seoSavedToast, setSeoSavedToast] = useState<string | null>(null);
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [blogs, setBlogs] = useState<BlogPost[]>([]);
   const [ads, setAds] = useState<Advertisement[]>([]);
   const [seoMetadata, setSeoMetadata] = useState<SeoMetadata[]>([]);
   const [settings, setSettings] = useState<WebsiteSettingsMap>({});
@@ -71,11 +93,12 @@ export function AdminDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      let [b, sem, subj, pap, adList, seoList, siteSet] = await Promise.all([
+      let [b, sem, subj, pap, blogList, adList, seoList, siteSet] = await Promise.all([
         getAllBranches(),
         getAllSemesters(),
         getAllSubjects(),
         getAllPapers(),
+        getAllBlogPosts().catch(() => [] as BlogPost[]),
         getAllAdvertisements(),
         getAllSeoMetadata().catch(() => [] as SeoMetadata[]),
         getWebsiteSettings(),
@@ -92,6 +115,7 @@ export function AdminDashboardPage() {
       setSemesters(sem);
       setSubjects(subj);
       setPapers(pap);
+      setBlogs(blogList);
       setAds(adList);
       setSeoMetadata(seoList);
       setSettings(siteSet);
@@ -108,6 +132,31 @@ export function AdminDashboardPage() {
       void loadAdminData();
     }
   }, [authReady, isAdmin, loadAdminData]);
+
+  const modalOtherSets = useMemo(() => {
+    const otherTitles = new Set<string>();
+    const otherDescriptions = new Set<string>();
+    if (!modalSeoDescriptor) return { otherTitles, otherDescriptions };
+    const storedMap = new Map(seoMetadata.map((item) => [item.id, item]));
+    const allDescriptors = collectCatalogPageDescriptors({
+      branches,
+      semesters,
+      subjects,
+      papers,
+      blogs,
+      siteUrl: settings.siteUrl,
+      siteDescription: settings.siteDescription,
+    });
+    for (const d of allDescriptors) {
+      if (d.seoId === modalSeoDescriptor.seoId) continue;
+      const merged = mergeDescriptorWithSeo(d, storedMap.get(d.seoId));
+      const t = merged.seoTitle.trim().toLowerCase();
+      const desc = merged.metaDescription.trim().toLowerCase();
+      if (t) otherTitles.add(t);
+      if (desc) otherDescriptions.add(desc);
+    }
+    return { otherTitles, otherDescriptions };
+  }, [modalSeoDescriptor, seoMetadata, branches, semesters, subjects, papers, blogs, settings]);
 
   const handleNavigate = (next: AdminSection, openCreate = false) => {
     setOpenCreateOnSwitch(openCreate);
@@ -141,6 +190,7 @@ export function AdminDashboardPage() {
     { id: 'semesters', label: 'Manage Semesters', icon: Layers },
     { id: 'subjects', label: 'Manage Subjects', icon: BookOpen },
     { id: 'papers', label: 'Manage Papers', icon: FileText },
+    { id: 'blogs', label: 'Blog Posts', icon: Newspaper },
     { id: 'ads', label: 'Manage Advertisements', icon: Megaphone, superOnly: true },
     { id: 'seo', label: 'SEO Management', icon: Globe },
     { id: 'settings', label: 'Website Settings', icon: Settings, superOnly: true },
@@ -274,6 +324,22 @@ export function AdminDashboardPage() {
             </div>
           )}
 
+          {seoSavedToast && (
+            <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{seoSavedToast}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSeoSavedToast(null)}
+                className="text-xs font-semibold hover:underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {loading ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               {[1, 2, 3].map((n) => (
@@ -288,6 +354,7 @@ export function AdminDashboardPage() {
                   semesters={semesters}
                   subjects={subjects}
                   papers={papers}
+                  blogs={blogs}
                   ads={ads}
                   isSuperAdmin={isSuperAdmin}
                   onNavigate={handleNavigate}
@@ -296,7 +363,9 @@ export function AdminDashboardPage() {
               {section === 'branches' && (
                 <BranchManager
                   branches={branches}
+                  settings={settings}
                   onRefresh={loadAdminData}
+                  onOpenSeoEditor={(desc) => setModalSeoDescriptor(desc)}
                   initialCreate={openCreateOnSwitch}
                 />
               )}
@@ -304,7 +373,9 @@ export function AdminDashboardPage() {
                 <SemesterManager
                   branches={branches}
                   semesters={semesters}
+                  settings={settings}
                   onRefresh={loadAdminData}
+                  onOpenSeoEditor={(desc) => setModalSeoDescriptor(desc)}
                   initialCreate={openCreateOnSwitch}
                 />
               )}
@@ -313,7 +384,9 @@ export function AdminDashboardPage() {
                   branches={branches}
                   semesters={semesters}
                   subjects={subjects}
+                  settings={settings}
                   onRefresh={loadAdminData}
+                  onOpenSeoEditor={(desc) => setModalSeoDescriptor(desc)}
                   initialCreate={openCreateOnSwitch}
                 />
               )}
@@ -323,7 +396,19 @@ export function AdminDashboardPage() {
                   semesters={semesters}
                   subjects={subjects}
                   papers={papers}
+                  settings={settings}
                   onRefresh={loadAdminData}
+                  onOpenSeoEditor={(desc) => setModalSeoDescriptor(desc)}
+                  initialCreate={openCreateOnSwitch}
+                />
+              )}
+              {section === 'blogs' && (
+                <BlogManager
+                  blogs={blogs}
+                  branches={branches}
+                  settings={settings}
+                  onRefresh={loadAdminData}
+                  onOpenSeoEditor={(desc) => setModalSeoDescriptor(desc)}
                   initialCreate={openCreateOnSwitch}
                 />
               )}
@@ -340,6 +425,7 @@ export function AdminDashboardPage() {
                   semesters={semesters}
                   subjects={subjects}
                   papers={papers}
+                  blogs={blogs}
                   seoMetadata={seoMetadata}
                   settings={settings}
                   onRefresh={loadAdminData}
@@ -352,6 +438,24 @@ export function AdminDashboardPage() {
           )}
         </main>
       </div>
+
+      {/* Quick-Edit On-Page SEO Modal triggered from Branch / Semester / Subject / Paper / Blog Managers */}
+      {modalSeoDescriptor && (
+        <SeoEditorPanel
+          asModal
+          descriptor={modalSeoDescriptor}
+          storedSeo={seoMetadata.find((item) => item.id === modalSeoDescriptor.seoId)}
+          otherTitles={modalOtherSets.otherTitles}
+          otherDescriptions={modalOtherSets.otherDescriptions}
+          settings={settings}
+          onSaved={async (msg) => {
+            setSeoSavedToast(msg);
+            setModalSeoDescriptor(null);
+            await loadAdminData();
+          }}
+          onClose={() => setModalSeoDescriptor(null)}
+        />
+      )}
     </div>
   );
 }

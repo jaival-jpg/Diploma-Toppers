@@ -3,6 +3,8 @@ import { GlobalAdScripts } from './components/AdSlot';
 import { AuthProvider } from './contexts/AuthContext';
 import { CatalogProvider } from './contexts/CatalogContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { BlogIndexPage } from './pages/BlogIndexPage';
+import { BlogPostPage } from './pages/BlogPostPage';
 import { BranchPage } from './pages/BranchPage';
 import { HomePage } from './pages/HomePage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -22,6 +24,8 @@ export default function App() {
             <GlobalAdScripts />
             <Routes>
               <Route path="/" element={<HomePage />} />
+              <Route path="/blog" element={<BlogIndexPage />} />
+              <Route path="/blog/:blogSlug" element={<BlogPostPage />} />
               <Route path="/about" element={<StaticPage kind="about" />} />
               <Route path="/contact" element={<StaticPage kind="contact" />} />
               <Route path="/privacy-policy" element={<StaticPage kind="privacy" />} />

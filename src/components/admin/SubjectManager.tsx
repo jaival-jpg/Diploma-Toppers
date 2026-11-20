@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Edit2, ExternalLink, Globe, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   deleteSubjectSafe,
   saveSubject,
   saveSubjectAcrossAllBranches,
 } from '../../services/firestoreCatalog';
-import type { Branch, Semester, Subject } from '../../types/academic';
+import { buildSubjectSeoDefaults, type SeoPageDescriptor } from '../../services/seoDefaults';
+import type { Branch, Semester, Subject, WebsiteSettingsMap } from '../../types/academic';
 import { slugify } from '../../utils/slugify';
 
 interface SubjectManagerProps {
   branches: Branch[];
   semesters: Semester[];
   subjects: Subject[];
+  settings?: WebsiteSettingsMap;
   onRefresh: () => Promise<void>;
+  onOpenSeoEditor?: (descriptor: SeoPageDescriptor) => void;
   initialCreate?: boolean;
 }
 
@@ -22,7 +25,9 @@ export function SubjectManager({
   branches,
   semesters,
   subjects,
+  settings,
   onRefresh,
+  onOpenSeoEditor,
   initialCreate = false,
 }: SubjectManagerProps) {
   const [showForm, setShowForm] = useState(initialCreate);
@@ -456,16 +461,39 @@ export function SubjectManager({
                         const sem = semesterMap.get(s.semesterId);
                         if (!br || !sem) return null;
                         return (
-                          <a
-                            href={`/${br.slug}/semester-${sem.semesterNumber}/${s.slug}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open live subject page"
-                            aria-label={`Open ${s.name} public page`}
-                            className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:text-slate-300"
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
+                          <>
+                            {onOpenSeoEditor && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onOpenSeoEditor(
+                                    buildSubjectSeoDefaults(
+                                      br,
+                                      sem,
+                                      s,
+                                      settings?.siteUrl,
+                                      typeof window !== 'undefined' ? window.location.origin : undefined
+                                    )
+                                  )
+                                }
+                                title="Edit SEO & On-Page Content"
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-[#1769D2] hover:border-[#1769D2] dark:border-slate-700 dark:text-blue-400"
+                              >
+                                <Globe className="h-3.5 w-3.5" />
+                                <span>SEO</span>
+                              </button>
+                            )}
+                            <a
+                              href={`/${br.slug}/semester-${sem.semesterNumber}/${s.slug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open live subject page"
+                              aria-label={`Open ${s.name} public page`}
+                              className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:text-slate-300"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </>
                         );
                       })()}
                       <button

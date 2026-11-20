@@ -1,16 +1,25 @@
 import { useState } from 'react';
-import { Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Edit2, Globe, Loader2, Plus, Trash2 } from 'lucide-react';
 import { deleteBranchSafe, saveBranch } from '../../services/firestoreCatalog';
-import type { Branch } from '../../types/academic';
+import { buildBranchSeoDefaults, type SeoPageDescriptor } from '../../services/seoDefaults';
+import type { Branch, WebsiteSettingsMap } from '../../types/academic';
 import { slugify } from '../../utils/slugify';
 
 interface BranchManagerProps {
   branches: Branch[];
+  settings?: WebsiteSettingsMap;
   onRefresh: () => Promise<void>;
+  onOpenSeoEditor?: (descriptor: SeoPageDescriptor) => void;
   initialCreate?: boolean;
 }
 
-export function BranchManager({ branches, onRefresh, initialCreate = false }: BranchManagerProps) {
+export function BranchManager({
+  branches,
+  settings,
+  onRefresh,
+  onOpenSeoEditor,
+  initialCreate = false,
+}: BranchManagerProps) {
   const [showForm, setShowForm] = useState(initialCreate);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -252,6 +261,25 @@ export function BranchManager({ branches, onRefresh, initialCreate = false }: Br
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
+                      {onOpenSeoEditor && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenSeoEditor(
+                              buildBranchSeoDefaults(
+                                b,
+                                settings?.siteUrl,
+                                typeof window !== 'undefined' ? window.location.origin : undefined
+                              )
+                            )
+                          }
+                          title="Edit SEO & On-Page Content"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-[#1769D2] hover:border-[#1769D2] dark:border-slate-700 dark:text-blue-400"
+                        >
+                          <Globe className="h-3.5 w-3.5" />
+                          <span>SEO</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => openEdit(b)}

@@ -9,39 +9,37 @@ import {
   Globe,
   Loader2,
   RefreshCw,
-  RotateCcw,
-  Save,
   Search,
   ShieldCheck,
   Sparkles,
-  X,
   XCircle,
 } from 'lucide-react';
-import {
-  resetSeoMetadataToDefault,
-  saveSeoMetadata,
-  syncAllDefaultSeo,
-} from '../../services/firestoreCatalog';
+import { analyzePageSeo } from '../../services/seoAnalyzer';
+import { syncAllDefaultSeo } from '../../services/firestoreCatalog';
 import {
   collectCatalogPageDescriptors,
   mergeDescriptorWithSeo,
   type SeoPageDescriptor,
 } from '../../services/seoDefaults';
 import type {
+  BlogPost,
   Branch,
   Paper,
   Semester,
+  SeoAnalyzerReport,
   SeoMetadata,
   SeoPageType,
   Subject,
   WebsiteSettingsMap,
 } from '../../types/academic';
+import { SEO_PAGE_TYPE_LABELS, SeoEditorPanel } from './SeoEditorModal';
 
 interface SeoManagementManagerProps {
   branches: Branch[];
   semesters: Semester[];
   subjects: Subject[];
   papers: Paper[];
+  blogs?: BlogPost[];
   seoMetadata: SeoMetadata[];
   settings: WebsiteSettingsMap;
   onRefresh: () => Promise<void>;
@@ -50,21 +48,15 @@ interface SeoManagementManagerProps {
 interface CombinedSeoRow {
   descriptor: SeoPageDescriptor;
   seo: SeoMetadata;
+  stored?: SeoMetadata;
   missingDescription: boolean;
   missingTitle: boolean;
   duplicateTitle: boolean;
+  duplicateDescription: boolean;
+  report: SeoAnalyzerReport;
 }
 
-const PAGE_TYPE_LABELS: Record<SeoPageType, string> = {
-  home: 'Homepage',
-  branch: 'Branch',
-  semester: 'Semester',
-  subject: 'Subject',
-  paper: 'Paper',
-  static: 'Static Page',
-};
-
-type IssueFilter = 'ALL' | 'MISSING' | 'DUPLICATE' | 'CUSTOMIZED' | 'NOINDEX';
+type IssueFilter = 'ALL' | 'MISSING' | 'DUPLICATE' | 'THIN_CONTENT' | 'CUSTOMIZED' | 'NOINDEX';
 
 type SeoHealthStatus = 'Passed' | 'Failed' | 'Needs Attention';
 
@@ -142,6 +134,7 @@ export function SeoManagementManager({
   semesters,
   subjects,
   papers,
+  blogs = [],
   seoMetadata,
   settings,
   onRefresh,
@@ -151,20 +144,9 @@ export function SeoManagementManager({
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('ALL');
 
   const [syncing, setSyncing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Active editor state
-  const [editingRow, setEditingRow] = useState<CombinedSeoRow | null>(null);
-  const [seoTitle, setSeoTitle] = useState('');
-  const [metaDescription, setMetaDescription] = useState('');
-  const [canonicalUrl, setCanonicalUrl] = useState('');
-  const [ogTitle, setOgTitle] = useState('');
-  const [ogDescription, setOgDescription] = useState('');
-  const [ogImageUrl, setOgImageUrl] = useState('');
-  const [robotsDirective, setRobotsDirective] = useState<'index_follow' | 'noindex_nofollow'>('index_follow');
+  const [editingSeoId, setEditingSeoId] = useState<string | null>(null);
 
   // Automated Production SEO Health Check state
   const [healthTargetUrl, setHealthTargetUrl] = useState(() =>
@@ -185,43 +167,77 @@ export function SeoManagementManager({
       semesters,
       subjects,
       papers,
+      blogs,
       siteUrl: settings.siteUrl,
       siteDescription: settings.siteDescription,
     });
 
     const baseList = descriptors.map((descriptor) => {
-      const seo = mergeDescriptorWithSeo(descriptor, storedMap.get(descriptor.seoId));
-      return { descriptor, seo };
+      const stored = storedMap.get(descriptor.seoId);
+      const seo = mergeDescriptorWithSeo(descriptor, stored);
+      return { descriptor, seo, stored };
     });
 
     const titleCounts = new Map<string, number>();
+    const descCounts = new Map<string, number>();
     for (const item of baseList) {
-      const key = item.seo.seoTitle.trim().toLowerCase();
-      if (key) {
-        titleCounts.set(key, (titleCounts.get(key) || 0) + 1);
-      }
+      const tKey = item.seo.seoTitle.trim().toLowerCase();
+      if (tKey) titleCounts.set(tKey, (titleCounts.get(tKey) || 0) + 1);
+      const dKey = item.seo.metaDescription.trim().toLowerCase();
+      if (dKey) descCounts.set(dKey, (descCounts.get(dKey) || 0) + 1);
     }
 
-    return baseList.map(({ descriptor, seo }) => {
+    return baseList.map(({ descriptor, seo, stored }) => {
       const normTitle = seo.seoTitle.trim().toLowerCase();
+      const normDesc = seo.metaDescription.trim().toLowerCase();
+      const duplicateTitle = Boolean(normTitle && (titleCounts.get(normTitle) || 0) > 1);
+      const duplicateDescription = Boolean(normDesc && (descCounts.get(normDesc) || 0) > 1);
+      const report = analyzePageSeo({
+        seo,
+        descriptor,
+        duplicateTitle,
+        duplicateDescription,
+      });
+
       return {
         descriptor,
         seo,
+        stored,
         missingTitle: !seo.seoTitle.trim(),
         missingDescription: !seo.metaDescription.trim(),
-        duplicateTitle: Boolean(normTitle && (titleCounts.get(normTitle) || 0) > 1),
+        duplicateTitle,
+        duplicateDescription,
+        report,
       };
     });
-  }, [branches, semesters, subjects, papers, seoMetadata, settings.siteUrl, settings.siteDescription]);
+  }, [branches, semesters, subjects, papers, blogs, seoMetadata, settings.siteUrl, settings.siteDescription]);
+
+  const editingRow = useMemo(
+    () => (editingSeoId ? combinedRows.find((r) => r.descriptor.seoId === editingSeoId) || null : null),
+    [editingSeoId, combinedRows]
+  );
+
+  const otherSetsForEditor = useMemo(() => {
+    const otherTitles = new Set<string>();
+    const otherDescriptions = new Set<string>();
+    for (const r of combinedRows) {
+      if (editingRow && r.descriptor.seoId === editingRow.descriptor.seoId) continue;
+      const t = r.seo.seoTitle.trim().toLowerCase();
+      const d = r.seo.metaDescription.trim().toLowerCase();
+      if (t) otherTitles.add(t);
+      if (d) otherDescriptions.add(d);
+    }
+    return { otherTitles, otherDescriptions };
+  }, [combinedRows, editingRow]);
 
   const stats = useMemo(() => {
     const total = combinedRows.length;
     const indexed = combinedRows.filter((r) => r.descriptor.isPublished && r.seo.robotsIndex).length;
     const noindex = total - indexed;
-    const missingDesc = combinedRows.filter((r) => r.missingDescription || r.missingTitle).length;
-    const duplicateTitles = combinedRows.filter((r) => r.duplicateTitle).length;
+    const issues = combinedRows.filter((r) => r.report.failedCount > 0).length;
+    const duplicates = combinedRows.filter((r) => r.duplicateTitle || r.duplicateDescription).length;
     const customized = combinedRows.filter((r) => r.seo.isCustomized).length;
-    return { total, indexed, noindex, missingDesc, duplicateTitles, customized };
+    return { total, indexed, noindex, issues, duplicates, customized };
   }, [combinedRows]);
 
   const filteredRows = useMemo(() => {
@@ -229,96 +245,18 @@ export function SeoManagementManager({
     return combinedRows.filter((row) => {
       if (typeFilter !== 'ALL' && row.descriptor.pageType !== typeFilter) return false;
       if (issueFilter === 'MISSING' && !row.missingDescription && !row.missingTitle) return false;
-      if (issueFilter === 'DUPLICATE' && !row.duplicateTitle) return false;
+      if (issueFilter === 'DUPLICATE' && !row.duplicateTitle && !row.duplicateDescription) return false;
+      if (issueFilter === 'THIN_CONTENT' && row.report.wordCount >= 75) return false;
       if (issueFilter === 'CUSTOMIZED' && !row.seo.isCustomized) return false;
       if (issueFilter === 'NOINDEX' && row.descriptor.isPublished && row.seo.robotsIndex) return false;
 
       if (q) {
-        const hay = `${row.seo.pageName} ${row.seo.pagePath} ${row.seo.seoTitle} ${row.seo.metaDescription}`.toLowerCase();
+        const hay = `${row.seo.pageName} ${row.seo.pagePath} ${row.seo.focusKeyword} ${row.seo.seoTitle} ${row.seo.metaDescription}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
   }, [combinedRows, searchText, typeFilter, issueFilter]);
-
-  const openEditor = (row: CombinedSeoRow) => {
-    setEditingRow(row);
-    setSeoTitle(row.seo.seoTitle);
-    setMetaDescription(row.seo.metaDescription);
-    setCanonicalUrl(row.seo.canonicalUrl || row.descriptor.defaultCanonical);
-    setOgTitle(row.seo.ogTitle || row.seo.seoTitle);
-    setOgDescription(row.seo.ogDescription || row.seo.metaDescription);
-    setOgImageUrl(row.seo.ogImageUrl || '');
-    setRobotsDirective(
-      row.seo.robotsIndex && row.seo.robotsFollow ? 'index_follow' : 'noindex_nofollow'
-    );
-    setError(null);
-    setStatusMessage(null);
-  };
-
-  const handleSaveEditor = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingRow) return;
-    setError(null);
-
-    if (!seoTitle.trim()) {
-      setError('SEO Title is required.');
-      return;
-    }
-    if (!metaDescription.trim()) {
-      setError('Meta Description is required.');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const isIndexFollow = robotsDirective === 'index_follow';
-      await saveSeoMetadata({
-        pageType: editingRow.descriptor.pageType,
-        pageReferenceId: editingRow.descriptor.pageReferenceId,
-        pageName: editingRow.descriptor.pageName,
-        pagePath: editingRow.descriptor.pagePath,
-        seoTitle,
-        metaDescription,
-        canonicalUrl: canonicalUrl.trim() || editingRow.descriptor.defaultCanonical,
-        ogTitle: ogTitle.trim() || seoTitle.trim(),
-        ogDescription: ogDescription.trim() || metaDescription.trim(),
-        ogImageUrl,
-        robotsIndex: isIndexFollow,
-        robotsFollow: isIndexFollow,
-        isCustomized: true,
-      });
-      setStatusMessage(`Saved custom SEO metadata for "${editingRow.descriptor.pageName}".`);
-      setEditingRow(null);
-      await onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save SEO metadata.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleResetToDefault = async () => {
-    if (!editingRow) return;
-    setError(null);
-    setResetting(true);
-    try {
-      await resetSeoMetadataToDefault(editingRow.descriptor);
-      setSeoTitle(editingRow.descriptor.defaultTitle);
-      setMetaDescription(editingRow.descriptor.defaultDescription);
-      setCanonicalUrl(editingRow.descriptor.defaultCanonical);
-      setOgTitle(editingRow.descriptor.defaultTitle);
-      setOgDescription(editingRow.descriptor.defaultDescription);
-      setOgImageUrl('');
-      setRobotsDirective(editingRow.descriptor.isPublished ? 'index_follow' : 'noindex_nofollow');
-      setStatusMessage(`Reset SEO metadata for "${editingRow.descriptor.pageName}" back to auto-generated default.`);
-      await onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset SEO metadata.');
-    } finally {
-      setResetting(false);
-    }
-  };
 
   const handleBulkGenerateDefaults = async () => {
     setError(null);
@@ -330,12 +268,13 @@ export function SeoManagementManager({
         semesters,
         subjects,
         papers,
+        blogs,
         siteUrl: settings.siteUrl,
         siteDescription: settings.siteDescription,
       });
       await onRefresh();
       setStatusMessage(
-        `Default SEO sync complete: ${res.created} registered, ${res.updated} auto-updated, ${res.skippedCustomized} customized pages preserved.`
+        `On-Page SEO & content sync complete: ${res.created} registered, ${res.updated} auto-updated, ${res.skippedCustomized} customized pages preserved.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate default SEO metadata.');
@@ -349,8 +288,12 @@ export function SeoManagementManager({
       'Page Name',
       'Page Type',
       'Page URL',
+      'Focus Keyword',
       'SEO Title',
       'Meta Description',
+      'H1 Heading',
+      'Word Count',
+      'Checklist Passed',
       'Canonical URL',
       'Indexing Status',
       'Customized',
@@ -358,16 +301,18 @@ export function SeoManagementManager({
     ];
     const rows = filteredRows.map((r) => [
       r.seo.pageName,
-      PAGE_TYPE_LABELS[r.descriptor.pageType],
+      SEO_PAGE_TYPE_LABELS[r.descriptor.pageType],
       r.seo.pagePath,
+      r.seo.focusKeyword,
       r.seo.seoTitle,
       r.seo.metaDescription,
+      r.seo.h1Heading,
+      String(r.report.wordCount),
+      `${r.report.passedCount}/${r.report.totalChecks}`,
       r.seo.canonicalUrl,
       !r.descriptor.isPublished
         ? 'Unpublished (Noindex)'
-        : r.seo.robotsIndex
-        ? 'Index, Follow'
-        : 'Noindex, Nofollow',
+        : `${r.seo.robotsIndex ? 'Index' : 'Noindex'}, ${r.seo.robotsFollow ? 'Follow' : 'Nofollow'}`,
       r.seo.isCustomized ? 'Yes' : 'Auto',
       formatTimestamp(r.seo.updatedAt),
     ]);
@@ -386,20 +331,6 @@ export function SeoManagementManager({
     link.remove();
     URL.revokeObjectURL(url);
   };
-
-  const titleLen = seoTitle.trim().length;
-  const descLen = metaDescription.trim().length;
-
-  const previewUrlFormatted = useMemo(() => {
-    const raw = (canonicalUrl || editingRow?.descriptor.defaultCanonical || 'https://diplomatoppers.in').trim();
-    try {
-      const parsed = new URL(raw);
-      const parts = parsed.pathname.split('/').filter(Boolean);
-      return parts.length > 0 ? `${parsed.origin} › ${parts.join(' › ')}` : parsed.origin;
-    } catch {
-      return raw;
-    }
-  }, [canonicalUrl, editingRow]);
 
   const handleRunHealthCheck = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -436,9 +367,11 @@ export function SeoManagementManager({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-[#202124] dark:text-white">SEO Management</h2>
+          <h2 className="text-xl font-bold text-[#202124] dark:text-white">
+            On-Page SEO &amp; Content Management
+          </h2>
           <p className="text-sm text-[#666666] dark:text-slate-400">
-            Configure page titles, meta descriptions, canonical URLs, Open Graph cards, and indexing directives for every public page.
+            Configure focus keywords, titles, descriptions, H1–H3 headings, study guide content, FAQs, and indexing settings across all 7 public page types.
           </p>
         </div>
 
@@ -450,7 +383,7 @@ export function SeoManagementManager({
             className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#1769D2] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#0D47A1] disabled:opacity-60"
           >
             {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            <span>Generate Default Metadata</span>
+            <span>Sync Auto SEO &amp; Content</span>
           </button>
           <button
             type="button"
@@ -463,7 +396,7 @@ export function SeoManagementManager({
         </div>
       </div>
 
-      {/* SEO Health Summary */}
+      {/* SEO Inventory Summary */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="text-xs font-medium text-[#666666] dark:text-slate-400">Public Pages</div>
@@ -488,15 +421,15 @@ export function SeoManagementManager({
           </div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <div className="text-xs font-medium text-[#666666] dark:text-slate-400">Missing Meta</div>
+          <div className="text-xs font-medium text-[#666666] dark:text-slate-400">Checklist Issues</div>
           <div className="mt-1 text-xl font-extrabold text-amber-600 tabular-nums dark:text-amber-400">
-            {stats.missingDesc}
+            {stats.issues}
           </div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <div className="text-xs font-medium text-[#666666] dark:text-slate-400">Duplicate Titles</div>
+          <div className="text-xs font-medium text-[#666666] dark:text-slate-400">Duplicates</div>
           <div className="mt-1 text-xl font-extrabold text-red-600 tabular-nums dark:text-red-400">
-            {stats.duplicateTitles}
+            {stats.duplicates}
           </div>
         </div>
       </div>
@@ -513,250 +446,21 @@ export function SeoManagementManager({
         </div>
       )}
 
-      {/* Individual SEO Editor + Live Mobile Google Preview */}
+      {/* Full 16-Field Individual SEO & Content Editor + Live Preview + Analyzer */}
       {editingRow && (
-        <div className="rounded-2xl border-2 border-[#1769D2]/30 bg-white p-6 shadow-sm dark:border-blue-500/30 dark:bg-slate-900">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
-            <div>
-              <div className="text-xs font-semibold text-[#1769D2] dark:text-blue-400">
-                Editing {PAGE_TYPE_LABELS[editingRow.descriptor.pageType]} · {editingRow.descriptor.pagePath}
-              </div>
-              <h3 className="mt-0.5 text-lg font-bold text-[#202124] dark:text-white">
-                {editingRow.descriptor.pageName}
-              </h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => setEditingRow(null)}
-              aria-label="Close SEO editor"
-              className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!editingRow.descriptor.isPublished && (
-            <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>
-                This page is currently inactive/unpublished. Unpublished pages are automatically excluded from sitemap.xml and forced to noindex on the public site until published.
-              </span>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-            {/* Left Form Column */}
-            <form onSubmit={(e) => void handleSaveEditor(e)} className="space-y-4 lg:col-span-7">
-              <div>
-                <div className="mb-1 flex items-center justify-between text-xs font-semibold">
-                  <label htmlFor="seo-title-input">SEO Title</label>
-                  <span
-                    className={`tabular-nums ${
-                      titleLen >= 30 && titleLen <= 60
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : titleLen > 60
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-[#666666] dark:text-slate-400'
-                    }`}
-                  >
-                    {titleLen} / 60 chars (optimal 30–60)
-                  </span>
-                </div>
-                <input
-                  id="seo-title-input"
-                  type="text"
-                  required
-                  maxLength={200}
-                  value={seoTitle}
-                  onChange={(e) => setSeoTitle(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between text-xs font-semibold">
-                  <label htmlFor="seo-desc-input">Meta Description</label>
-                  <span
-                    className={`tabular-nums ${
-                      descLen >= 120 && descLen <= 160
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : descLen > 160
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-[#666666] dark:text-slate-400'
-                    }`}
-                  >
-                    {descLen} / 160 chars (optimal 120–160)
-                  </span>
-                </div>
-                <textarea
-                  id="seo-desc-input"
-                  rows={3}
-                  required
-                  maxLength={400}
-                  value={metaDescription}
-                  onChange={(e) => setMetaDescription(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="seo-canonical-input" className="mb-1 block text-xs font-semibold">
-                    Canonical URL
-                  </label>
-                  <input
-                    id="seo-canonical-input"
-                    type="url"
-                    maxLength={500}
-                    value={canonicalUrl}
-                    onChange={(e) => setCanonicalUrl(e.target.value)}
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="seo-robots-select" className="mb-1 block text-xs font-semibold">
-                    Robots Index &amp; Follow Setting
-                  </label>
-                  <select
-                    id="seo-robots-select"
-                    value={robotsDirective}
-                    onChange={(e) =>
-                      setRobotsDirective(e.target.value as 'index_follow' | 'noindex_nofollow')
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  >
-                    <option value="index_follow">Index, Follow (Recommended for public pages)</option>
-                    <option value="noindex_nofollow">Noindex, Nofollow (Exclude from sitemap &amp; search)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <div className="mb-1 flex items-center justify-between text-xs font-semibold">
-                    <label htmlFor="seo-og-title">Open Graph Title</label>
-                    <span className="text-[11px] text-[#666666] tabular-nums dark:text-slate-400">
-                      {ogTitle.trim().length} chars
-                    </span>
-                  </div>
-                  <input
-                    id="seo-og-title"
-                    type="text"
-                    maxLength={200}
-                    value={ogTitle}
-                    onChange={(e) => setOgTitle(e.target.value)}
-                    placeholder="Defaults to SEO Title"
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="seo-og-image" className="mb-1 block text-xs font-semibold">
-                    Open Graph Image URL
-                  </label>
-                  <input
-                    id="seo-og-image"
-                    type="url"
-                    maxLength={500}
-                    value={ogImageUrl}
-                    onChange={(e) => setOgImageUrl(e.target.value)}
-                    placeholder="https://.../og-banner.jpg"
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between text-xs font-semibold">
-                  <label htmlFor="seo-og-desc">Open Graph Description</label>
-                  <span className="text-[11px] text-[#666666] tabular-nums dark:text-slate-400">
-                    {ogDescription.trim().length} chars
-                  </span>
-                </div>
-                <textarea
-                  id="seo-og-desc"
-                  rows={2}
-                  maxLength={400}
-                  value={ogDescription}
-                  onChange={(e) => setOgDescription(e.target.value)}
-                  placeholder="Defaults to Meta Description"
-                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-[#1769D2] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-60"
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  <span>Save SEO Settings</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={resetting}
-                  onClick={() => void handleResetToDefault()}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-[#202124] hover:border-[#1769D2] hover:text-[#1769D2] disabled:opacity-60 dark:border-slate-700 dark:text-slate-100"
-                >
-                  {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                  <span>Reset to Default</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingRow(null)}
-                  className="min-h-[42px] rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-
-            {/* Right Column: Live Mobile Google Search Result Preview */}
-            <div className="space-y-3 lg:col-span-5">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[#666666] dark:text-slate-400">
-                  Mobile Google Search Preview
-                </h4>
-                <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-[#1769D2] dark:bg-blue-950/50 dark:text-blue-300">
-                  Live Preview
-                </span>
-              </div>
-
-              <div className="mx-auto max-w-[380px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#1f1f1f]">
-                {/* Site Header & Favicon */}
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#1769D2] text-[11px] font-extrabold text-white">
-                    DT
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-[#202124] dark:text-[#dadce0]">
-                      {settings.siteTitle?.trim() || 'DiplomaToppers'}
-                    </div>
-                    <div className="truncate text-[11px] text-[#4d5156] dark:text-[#bdc1c6]">
-                      {previewUrlFormatted}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Search Title */}
-                <div className="mt-2.5 line-clamp-2 text-[18px] leading-snug font-medium text-[#1a0dab] dark:text-[#8ab4f8]">
-                  {seoTitle.trim() || editingRow.descriptor.defaultTitle}
-                </div>
-
-                {/* Meta Description */}
-                <div className="mt-1.5 line-clamp-3 text-[13px] leading-relaxed text-[#4d5156] dark:text-[#bdc1c6]">
-                  {metaDescription.trim() || editingRow.descriptor.defaultDescription}
-                </div>
-              </div>
-
-              <p className="text-[11px] leading-relaxed text-[#666666] dark:text-slate-400">
-                <strong>Preview Notice:</strong> This preview approximates a mobile Google Search result and is not a guarantee of Google&apos;s final snippet. Google may dynamically rewrite titles or descriptions based on search queries and page content.
-              </p>
-            </div>
-          </div>
-        </div>
+        <SeoEditorPanel
+          descriptor={editingRow.descriptor}
+          storedSeo={editingRow.stored}
+          otherTitles={otherSetsForEditor.otherTitles}
+          otherDescriptions={otherSetsForEditor.otherDescriptions}
+          settings={settings}
+          onSaved={async (msg) => {
+            setStatusMessage(msg);
+            setEditingSeoId(null);
+            await onRefresh();
+          }}
+          onClose={() => setEditingSeoId(null)}
+        />
       )}
 
       {/* Search & Filter Controls */}
@@ -767,7 +471,7 @@ export function SeoManagementManager({
             type="search"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Search by page name, URL, SEO title, or description..."
+            placeholder="Search by page name, URL, focus keyword, title, or description..."
             className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-950"
           />
         </div>
@@ -784,6 +488,7 @@ export function SeoManagementManager({
           <option value="semester">Semesters</option>
           <option value="subject">Subjects</option>
           <option value="paper">Papers</option>
+          <option value="blog">Blog Pages</option>
           <option value="static">Static Pages</option>
         </select>
 
@@ -794,8 +499,9 @@ export function SeoManagementManager({
           className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
         >
           <option value="ALL">All Statuses</option>
-          <option value="MISSING">Missing Metadata</option>
-          <option value="DUPLICATE">Duplicate SEO Titles</option>
+          <option value="MISSING">Missing Title / Description</option>
+          <option value="DUPLICATE">Duplicate Title / Description</option>
+          <option value="THIN_CONTENT">Short On-Page Content (&lt;75 words)</option>
           <option value="CUSTOMIZED">Customized Only</option>
           <option value="NOINDEX">Noindex Pages</option>
         </select>
@@ -808,12 +514,12 @@ export function SeoManagementManager({
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-[#666666] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
                 <th className="px-4 py-3">Page Name</th>
-                <th className="px-4 py-3">Page Type</th>
+                <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Page URL</th>
-                <th className="px-4 py-3">SEO Title</th>
-                <th className="px-4 py-3">Meta Description</th>
-                <th className="px-4 py-3">Indexing Status</th>
-                <th className="px-4 py-3">Last Updated</th>
+                <th className="px-4 py-3">SEO Title &amp; Keyword</th>
+                <th className="px-4 py-3">On-Page Readiness</th>
+                <th className="px-4 py-3">Indexing</th>
+                <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3 text-right">Edit SEO</th>
               </tr>
             </thead>
@@ -826,26 +532,15 @@ export function SeoManagementManager({
                       <div className="font-semibold text-[#202124] dark:text-white">
                         {row.seo.pageName}
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {row.seo.isCustomized && (
-                          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-[#1769D2] dark:bg-blue-950/60 dark:text-blue-300">
-                            Customized
-                          </span>
-                        )}
-                        {row.duplicateTitle && (
-                          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300">
-                            Duplicate Title
-                          </span>
-                        )}
-                        {(row.missingDescription || row.missingTitle) && (
-                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
-                            Missing Meta
-                          </span>
-                        )}
+                      <div className="mt-0.5 text-[11px] font-medium text-[#666666] dark:text-slate-400">
+                        {row.seo.isCustomized ? 'Custom SEO' : 'Auto-Generated'}
+                        {row.duplicateTitle && ' · Duplicate Title'}
+                        {row.duplicateDescription && ' · Duplicate Desc'}
+                        {(row.missingDescription || row.missingTitle) && ' · Missing Meta'}
                       </div>
                     </td>
                     <td className="px-4 py-3 align-top text-xs font-medium text-[#666666] dark:text-slate-400">
-                      {PAGE_TYPE_LABELS[row.descriptor.pageType]}
+                      {SEO_PAGE_TYPE_LABELS[row.descriptor.pageType]}
                     </td>
                     <td className="px-4 py-3 align-top font-mono text-xs text-[#1769D2] dark:text-blue-400">
                       <a
@@ -854,16 +549,30 @@ export function SeoManagementManager({
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 hover:underline"
                       >
-                        <span className="max-w-[180px] truncate">{row.seo.pagePath}</span>
+                        <span className="max-w-[160px] truncate">{row.seo.pagePath}</span>
                         <ExternalLink className="h-3 w-3 shrink-0" />
                       </a>
                     </td>
                     <td className="px-4 py-3 align-top text-xs text-[#202124] dark:text-slate-200">
-                      <div className="max-w-[220px] line-clamp-2">{row.seo.seoTitle || '—'}</div>
+                      <div className="max-w-[240px] line-clamp-2 font-medium">{row.seo.seoTitle || '—'}</div>
+                      <div className="mt-0.5 max-w-[240px] truncate text-[11px] text-[#666666] dark:text-slate-400">
+                        KW: {row.seo.focusKeyword || '—'}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 align-top text-xs text-[#666666] dark:text-slate-400">
-                      <div className="max-w-[260px] line-clamp-2">
-                        {row.seo.metaDescription || '—'}
+                    <td className="px-4 py-3 align-top text-xs tabular-nums">
+                      <div
+                        className={`font-bold ${
+                          row.report.failedCount > 0
+                            ? 'text-red-600 dark:text-red-400'
+                            : row.report.warningCount > 0
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {row.report.passedCount}/{row.report.totalChecks} checks
+                      </div>
+                      <div className="text-[11px] text-[#666666] dark:text-slate-400">
+                        {row.report.wordCount} words · {row.seo.faqs.length} FAQs
                       </div>
                     </td>
                     <td className="px-4 py-3 align-top text-xs font-semibold whitespace-nowrap">
@@ -874,7 +583,9 @@ export function SeoManagementManager({
                           {row.seo.robotsFollow ? 'Index, Follow' : 'Index, Nofollow'}
                         </span>
                       ) : (
-                        <span className="text-slate-500 dark:text-slate-400">Noindex, Nofollow</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                          Noindex, {row.seo.robotsFollow ? 'Follow' : 'Nofollow'}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3 align-top text-xs text-[#666666] tabular-nums whitespace-nowrap dark:text-slate-400">
@@ -883,7 +594,11 @@ export function SeoManagementManager({
                     <td className="px-4 py-3 align-top text-right">
                       <button
                         type="button"
-                        onClick={() => openEditor(row)}
+                        onClick={() => {
+                          setEditingSeoId(row.descriptor.seoId);
+                          setStatusMessage(null);
+                          setError(null);
+                        }}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-[#202124] transition-colors hover:border-[#1769D2] hover:text-[#1769D2] dark:border-slate-700 dark:text-slate-200"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
@@ -1066,7 +781,7 @@ export function SeoManagementManager({
           <span>Technical Indexing &amp; Search Console Guidance</span>
         </div>
         <p>
-          Adding a page to <code className="font-mono">sitemap.xml</code> and configuring metadata provides the technical foundation for Google crawling and indexing, though it does not guarantee indexing. Admin pages (<code className="font-mono">/admin/*</code>), unpublished records, and pages set to <strong>Noindex</strong> are automatically excluded from <code className="font-mono">sitemap.xml</code>. Use Google Search Console&apos;s URL Inspection tool to test live production pages.
+          Adding a page to <code className="font-mono">sitemap.xml</code> and configuring metadata provides the technical foundation for Google crawling and indexing, though it does not guarantee indexing or specific search positions. Admin pages (<code className="font-mono">/admin/*</code>), unpublished records, and pages set to <strong>Noindex</strong> are automatically excluded from <code className="font-mono">sitemap.xml</code>.
         </p>
         <button
           type="button"

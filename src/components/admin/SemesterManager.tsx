@@ -1,19 +1,24 @@
 import { useState } from 'react';
-import { Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Edit2, Globe, Loader2, Plus, Trash2 } from 'lucide-react';
 import { deleteSemesterSafe, saveSemester } from '../../services/firestoreCatalog';
-import type { Branch, Semester } from '../../types/academic';
+import { buildSemesterSeoDefaults, type SeoPageDescriptor } from '../../services/seoDefaults';
+import type { Branch, Semester, WebsiteSettingsMap } from '../../types/academic';
 
 interface SemesterManagerProps {
   branches: Branch[];
   semesters: Semester[];
+  settings?: WebsiteSettingsMap;
   onRefresh: () => Promise<void>;
+  onOpenSeoEditor?: (descriptor: SeoPageDescriptor) => void;
   initialCreate?: boolean;
 }
 
 export function SemesterManager({
   branches,
   semesters,
+  settings,
   onRefresh,
+  onOpenSeoEditor,
   initialCreate = false,
 }: SemesterManagerProps) {
   const [showForm, setShowForm] = useState(initialCreate);
@@ -271,6 +276,30 @@ export function SemesterManager({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
+                      {onOpenSeoEditor && (() => {
+                        const br = branchMap.get(s.branchId);
+                        if (!br) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onOpenSeoEditor(
+                                buildSemesterSeoDefaults(
+                                  br,
+                                  s,
+                                  settings?.siteUrl,
+                                  typeof window !== 'undefined' ? window.location.origin : undefined
+                                )
+                              )
+                            }
+                            title="Edit SEO & On-Page Content"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-[#1769D2] hover:border-[#1769D2] dark:border-slate-700 dark:text-blue-400"
+                          >
+                            <Globe className="h-3.5 w-3.5" />
+                            <span>SEO</span>
+                          </button>
+                        );
+                      })()}
                       <button
                         type="button"
                         onClick={() => openEdit(s)}

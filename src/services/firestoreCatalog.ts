@@ -14,10 +14,12 @@ import {
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type {
   Advertisement,
+  BlogPost,
   Branch,
   ExamSession,
   Paper,
   Semester,
+  SeoFaqItem,
   SeoMetadata,
   SeoPageType,
   Subject,
@@ -26,6 +28,8 @@ import type {
 import { sanitizeId, slugify } from '../utils/slugify';
 import { deleteCloudFileByPath } from './cloudFileStorage';
 import {
+  buildBlogIndexSeoDefaults,
+  buildBlogPostSeoDefaults,
   buildBranchSeoDefaults,
   buildPaperSeoDefaults,
   buildSemesterSeoDefaults,
@@ -337,6 +341,30 @@ export async function getAllAdvertisements(): Promise<Advertisement[]> {
   }
 }
 
+export async function getActiveBlogPosts(): Promise<BlogPost[]> {
+  try {
+    const snap = await getDocs(query(collection(db, 'blog_posts'), where('isActive', '==', true)));
+    const items = snap.docs.map((d) => mapDoc<BlogPost>(d.id, d.data()));
+    return items.sort((a, b) =>
+      (b.publishedAt || b.createdAt || '').localeCompare(a.publishedAt || a.createdAt || '')
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'blog_posts');
+  }
+}
+
+export async function getAllBlogPosts(): Promise<BlogPost[]> {
+  try {
+    const snap = await getDocs(collection(db, 'blog_posts'));
+    const items = snap.docs.map((d) => mapDoc<BlogPost>(d.id, d.data()));
+    return items.sort((a, b) =>
+      (b.publishedAt || b.createdAt || '').localeCompare(a.publishedAt || a.createdAt || '')
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'blog_posts');
+  }
+}
+
 export async function getWebsiteSettings(): Promise<WebsiteSettingsMap> {
   try {
     const snap = await getDocs(collection(db, 'website_settings'));
@@ -375,25 +403,60 @@ async function getConfiguredSiteUrl(): Promise<string | undefined> {
   return undefined;
 }
 
+function sanitizeStringArray(arr: string[] | undefined, maxItems: number, maxLen: number): string[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((s) => String(s || '').trim().slice(0, maxLen))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function sanitizeFaqArray(faqs: SeoFaqItem[] | undefined): SeoFaqItem[] {
+  if (!Array.isArray(faqs)) return [];
+  return faqs
+    .map((f) => ({
+      question: String(f?.question || '').trim().slice(0, 300),
+      answer: String(f?.answer || '').trim().slice(0, 2000),
+    }))
+    .filter((f) => f.question.length > 0 && f.answer.length > 0)
+    .slice(0, 15);
+}
+
+function descriptorContentPayload(descriptor: SeoPageDescriptor) {
+  return {
+    pageName: descriptor.pageName.slice(0, 200),
+    pagePath: descriptor.pagePath.slice(0, 300),
+    focusKeyword: descriptor.defaultFocusKeyword.slice(0, 200),
+    secondaryKeywords: descriptor.defaultSecondaryKeywords.slice(0, 500),
+    seoTitle: descriptor.defaultTitle.slice(0, 200),
+    metaDescription: descriptor.defaultDescription.slice(0, 400),
+    h1Heading: descriptor.defaultH1Heading.slice(0, 220),
+    h2Headings: sanitizeStringArray(descriptor.defaultH2Headings, 20, 220),
+    h3Headings: sanitizeStringArray(descriptor.defaultH3Headings, 30, 220),
+    mainIntro: descriptor.defaultMainIntro.slice(0, 2000),
+    detailedContent: descriptor.defaultDetailedContent.slice(0, 15000),
+    faqs: sanitizeFaqArray(descriptor.defaultFaqs),
+    imageAltText: descriptor.defaultImageAltText.slice(0, 300),
+    canonicalUrl: descriptor.defaultCanonical.slice(0, 500),
+    ogTitle: descriptor.defaultTitle.slice(0, 200),
+    ogDescription: descriptor.defaultDescription.slice(0, 400),
+    robotsIndex: descriptor.isPublished,
+    robotsFollow: descriptor.isPublished,
+    isCustomized: false,
+  };
+}
+
 async function upsertAutoSeoDescriptor(descriptor: SeoPageDescriptor): Promise<'created' | 'updated' | 'skipped'> {
   const ref = doc(db, 'seo_metadata', descriptor.seoId);
   try {
     const snap = await getDoc(ref);
+    const autoFields = descriptorContentPayload(descriptor);
     if (!snap.exists()) {
       await setDoc(ref, {
         pageType: descriptor.pageType,
         pageReferenceId: descriptor.pageReferenceId,
-        pageName: descriptor.pageName.slice(0, 200),
-        pagePath: descriptor.pagePath.slice(0, 300),
-        seoTitle: descriptor.defaultTitle.slice(0, 200),
-        metaDescription: descriptor.defaultDescription.slice(0, 400),
-        canonicalUrl: descriptor.defaultCanonical.slice(0, 500),
-        ogTitle: descriptor.defaultTitle.slice(0, 200),
-        ogDescription: descriptor.defaultDescription.slice(0, 400),
+        ...autoFields,
         ogImageUrl: '',
-        robotsIndex: descriptor.isPublished,
-        robotsFollow: descriptor.isPublished,
-        isCustomized: false,
         updatedAt: serverTimestamp(),
       });
       return 'created';
@@ -401,7 +464,6 @@ async function upsertAutoSeoDescriptor(descriptor: SeoPageDescriptor): Promise<'
 
     const existing = snap.data() as Partial<SeoMetadata>;
     if (existing.isCustomized) {
-      // Never overwrite customized SEO title/description/robots; only sync structural pageName/pagePath if changed
       if (existing.pageName !== descriptor.pageName || existing.pagePath !== descriptor.pagePath) {
         await updateDoc(ref, {
           pageName: descriptor.pageName.slice(0, 200),
@@ -413,16 +475,7 @@ async function upsertAutoSeoDescriptor(descriptor: SeoPageDescriptor): Promise<'
     }
 
     await updateDoc(ref, {
-      pageName: descriptor.pageName.slice(0, 200),
-      pagePath: descriptor.pagePath.slice(0, 300),
-      seoTitle: descriptor.defaultTitle.slice(0, 200),
-      metaDescription: descriptor.defaultDescription.slice(0, 400),
-      canonicalUrl: descriptor.defaultCanonical.slice(0, 500),
-      ogTitle: descriptor.defaultTitle.slice(0, 200),
-      ogDescription: descriptor.defaultDescription.slice(0, 400),
-      robotsIndex: descriptor.isPublished,
-      robotsFollow: descriptor.isPublished,
-      isCustomized: false,
+      ...autoFields,
       updatedAt: serverTimestamp(),
     });
     return 'updated';
@@ -445,8 +498,17 @@ export async function saveSeoMetadata(input: {
   pageReferenceId: string;
   pageName: string;
   pagePath: string;
+  focusKeyword?: string;
+  secondaryKeywords?: string;
   seoTitle: string;
   metaDescription: string;
+  h1Heading?: string;
+  h2Headings?: string[];
+  h3Headings?: string[];
+  mainIntro?: string;
+  detailedContent?: string;
+  faqs?: SeoFaqItem[];
+  imageAltText?: string;
   canonicalUrl: string;
   ogTitle: string;
   ogDescription: string;
@@ -464,8 +526,17 @@ export async function saveSeoMetadata(input: {
     const payload = {
       pageName: input.pageName.trim().slice(0, 200),
       pagePath: input.pagePath.trim().slice(0, 300),
+      focusKeyword: (input.focusKeyword || '').trim().slice(0, 200),
+      secondaryKeywords: (input.secondaryKeywords || '').trim().slice(0, 500),
       seoTitle: input.seoTitle.trim().slice(0, 200),
       metaDescription: input.metaDescription.trim().slice(0, 400),
+      h1Heading: (input.h1Heading || '').trim().slice(0, 220),
+      h2Headings: sanitizeStringArray(input.h2Headings, 20, 220),
+      h3Headings: sanitizeStringArray(input.h3Headings, 30, 220),
+      mainIntro: (input.mainIntro || '').trim().slice(0, 2000),
+      detailedContent: (input.detailedContent || '').trim().slice(0, 15000),
+      faqs: sanitizeFaqArray(input.faqs),
+      imageAltText: (input.imageAltText || '').trim().slice(0, 300),
       canonicalUrl: input.canonicalUrl.trim().slice(0, 500),
       ogTitle: input.ogTitle.trim().slice(0, 200),
       ogDescription: input.ogDescription.trim().slice(0, 400),
@@ -497,8 +568,17 @@ export async function resetSeoMetadataToDefault(descriptor: SeoPageDescriptor): 
     pageReferenceId: descriptor.pageReferenceId,
     pageName: descriptor.pageName,
     pagePath: descriptor.pagePath,
+    focusKeyword: descriptor.defaultFocusKeyword,
+    secondaryKeywords: descriptor.defaultSecondaryKeywords,
     seoTitle: descriptor.defaultTitle,
     metaDescription: descriptor.defaultDescription,
+    h1Heading: descriptor.defaultH1Heading,
+    h2Headings: descriptor.defaultH2Headings,
+    h3Headings: descriptor.defaultH3Headings,
+    mainIntro: descriptor.defaultMainIntro,
+    detailedContent: descriptor.defaultDetailedContent,
+    faqs: descriptor.defaultFaqs,
+    imageAltText: descriptor.defaultImageAltText,
     canonicalUrl: descriptor.defaultCanonical,
     ogTitle: descriptor.defaultTitle,
     ogDescription: descriptor.defaultDescription,
@@ -514,14 +594,16 @@ export async function syncAllDefaultSeo(params?: {
   semesters?: Semester[];
   subjects?: Subject[];
   papers?: Paper[];
+  blogs?: BlogPost[];
   siteUrl?: string;
   siteDescription?: string;
 }): Promise<{ created: number; updated: number; skippedCustomized: number }> {
-  const [branches, semesters, subjects, papers, settings, existingSeo] = await Promise.all([
+  const [branches, semesters, subjects, papers, blogs, settings, existingSeo] = await Promise.all([
     params?.branches ? Promise.resolve(params.branches) : getAllBranches(),
     params?.semesters ? Promise.resolve(params.semesters) : getAllSemesters(),
     params?.subjects ? Promise.resolve(params.subjects) : getAllSubjects(),
     params?.papers ? Promise.resolve(params.papers) : getAllPapers(),
+    params?.blogs ? Promise.resolve(params.blogs) : getAllBlogPosts(),
     getWebsiteSettings(),
     getAllSeoMetadata(),
   ]);
@@ -531,6 +613,7 @@ export async function syncAllDefaultSeo(params?: {
     semesters,
     subjects,
     papers,
+    blogs,
     siteUrl: params?.siteUrl ?? settings.siteUrl,
     siteDescription: params?.siteDescription ?? settings.siteDescription,
   });
@@ -560,7 +643,10 @@ export async function syncAllDefaultSeo(params?: {
       existing.canonicalUrl !== desc.defaultCanonical ||
       existing.pagePath !== desc.pagePath ||
       existing.pageName !== desc.pageName ||
-      existing.robotsIndex !== desc.isPublished
+      existing.robotsIndex !== desc.isPublished ||
+      !existing.h1Heading ||
+      !existing.detailedContent ||
+      !existing.focusKeyword
     ) {
       await upsertAutoSeoDescriptor(desc);
       updated++;
@@ -572,6 +658,19 @@ export async function syncAllDefaultSeo(params?: {
 
 // ---- Admin Mutations (CRUD + Validation + Safe Deletion) ----
 
+const RESERVED_BRANCH_SLUGS = new Set([
+  'admin',
+  'api',
+  'about',
+  'contact',
+  'privacy-policy',
+  'terms-and-conditions',
+  'disclaimer',
+  'blog',
+  'sitemap',
+  'robots',
+]);
+
 export async function saveBranch(
   input: { name: string; code: string; slug: string; description: string; isActive: boolean; displayOrder: number },
   existingId?: string
@@ -579,6 +678,9 @@ export async function saveBranch(
   const cleanSlug = slugify(input.slug || input.name);
   const cleanCode = input.code.trim().toUpperCase();
   if (!cleanSlug || cleanSlug.length < 2) throw new Error('Branch slug must be at least 2 characters.');
+  if (RESERVED_BRANCH_SLUGS.has(cleanSlug)) {
+    throw new Error(`"${cleanSlug}" is a reserved route slug. Please choose another branch slug.`);
+  }
   if (!cleanCode) throw new Error('Branch code is required.');
 
   const all = await getAllBranches();
@@ -615,7 +717,12 @@ export async function saveBranch(
       });
     }
 
-    const siteUrl = await getConfiguredSiteUrl();
+    const [semesters, subjects, papers, siteUrl] = await Promise.all([
+      getAllSemesters(),
+      getAllSubjects(),
+      getAllPapers(),
+      getConfiguredSiteUrl(),
+    ]);
     await upsertAutoSeoDescriptor(
       buildBranchSeoDefaults(
         {
@@ -626,7 +733,9 @@ export async function saveBranch(
           description: input.description.trim(),
           isActive: input.isActive,
         },
-        siteUrl
+        siteUrl,
+        undefined,
+        { semesters, subjects, papers }
       )
     );
     if (existingId) {
@@ -694,7 +803,12 @@ export async function saveSemester(
       });
     }
 
-    const [branches, siteUrl] = await Promise.all([getAllBranches(), getConfiguredSiteUrl()]);
+    const [branches, subjects, papers, siteUrl] = await Promise.all([
+      getAllBranches(),
+      getAllSubjects(),
+      getAllPapers(),
+      getConfiguredSiteUrl(),
+    ]);
     const parentBranch = branches.find((b) => b.id === input.branchId);
     if (parentBranch) {
       await upsertAutoSeoDescriptor(
@@ -706,7 +820,9 @@ export async function saveSemester(
             name: input.name.trim() || `Semester ${semNum}`,
             isActive: input.isActive,
           },
-          siteUrl
+          siteUrl,
+          undefined,
+          { subjects, papers }
         )
       );
     }
@@ -797,9 +913,10 @@ export async function saveSubject(
       });
     }
 
-    const [branches, semesters, siteUrl] = await Promise.all([
+    const [branches, semesters, papers, siteUrl] = await Promise.all([
       getAllBranches(),
       getAllSemesters(),
+      getAllPapers(),
       getConfiguredSiteUrl(),
     ]);
     const parentBranch = branches.find((b) => b.id === input.branchId);
@@ -817,7 +934,9 @@ export async function saveSubject(
             description: input.description.trim(),
             isActive: input.isActive,
           },
-          siteUrl
+          siteUrl,
+          undefined,
+          { papers }
         )
       );
     }
@@ -1207,6 +1326,115 @@ export async function deleteAdvertisement(adId: string): Promise<void> {
     await deleteDoc(doc(db, 'advertisements', adId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `advertisements/${adId}`);
+  }
+}
+
+export async function saveBlogPost(
+  input: {
+    title: string;
+    slug: string;
+    excerpt: string;
+    content: string;
+    category: string;
+    authorName: string;
+    coverImageUrl: string;
+    coverImageAlt: string;
+    relatedBranchId?: string;
+    isActive: boolean;
+    publishedAt?: string;
+  },
+  existingId?: string
+): Promise<string> {
+  const cleanTitle = input.title.trim();
+  const cleanSlug = slugify(input.slug || cleanTitle);
+  const cleanExcerpt = input.excerpt.trim();
+  const cleanContent = input.content.trim();
+  const cleanCategory = input.category.trim() || 'GTU Study Guide';
+  const cleanAuthor = input.authorName.trim() || 'DiplomaToppers Editorial';
+
+  if (cleanTitle.length < 3) throw new Error('Blog post title must be at least 3 characters.');
+  if (cleanSlug.length < 2) throw new Error('Blog URL slug must be at least 2 characters.');
+  if (cleanExcerpt.length < 10) throw new Error('Blog excerpt must be at least 10 characters.');
+  if (cleanContent.length < 20) throw new Error('Blog article content must be at least 20 characters.');
+
+  const all = await getAllBlogPosts();
+  const duplicate = all.find((p) => p.id !== existingId && p.slug === cleanSlug);
+  if (duplicate) {
+    throw new Error(`A blog post with slug "${cleanSlug}" already exists.`);
+  }
+
+  const rand = Math.random().toString(36).slice(2, 6);
+  const id = existingId || sanitizeId(`blog-${cleanSlug}-${Date.now().toString(36)}-${rand}`);
+  const docPath = `blog_posts/${id}`;
+  const publishedAtValue =
+    input.publishedAt?.trim() || new Date().toISOString().split('T')[0];
+
+  const payload = {
+    title: cleanTitle.slice(0, 200),
+    slug: cleanSlug.slice(0, 160),
+    excerpt: cleanExcerpt.slice(0, 500),
+    content: cleanContent.slice(0, 25000),
+    category: cleanCategory.slice(0, 80),
+    authorName: cleanAuthor.slice(0, 80),
+    coverImageUrl: (input.coverImageUrl || '').trim().slice(0, 500),
+    coverImageAlt: (input.coverImageAlt || cleanTitle).trim().slice(0, 300),
+    relatedBranchId: (input.relatedBranchId || '').trim().slice(0, 128),
+    publishedAt: publishedAtValue.slice(0, 40),
+    isActive: Boolean(input.isActive),
+  };
+
+  try {
+    if (existingId) {
+      await updateDoc(doc(db, 'blog_posts', existingId), {
+        ...payload,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(doc(db, 'blog_posts', id), {
+        ...payload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    const [siteUrl, updatedPosts] = await Promise.all([
+      getConfiguredSiteUrl(),
+      getAllBlogPosts().catch(() => [] as BlogPost[]),
+    ]);
+    await upsertAutoSeoDescriptor(
+      buildBlogPostSeoDefaults(
+        {
+          id,
+          title: payload.title,
+          slug: payload.slug,
+          excerpt: payload.excerpt,
+          content: payload.content,
+          category: payload.category,
+          coverImageAlt: payload.coverImageAlt,
+          isActive: payload.isActive,
+        },
+        siteUrl
+      )
+    );
+    await upsertAutoSeoDescriptor(
+      buildBlogIndexSeoDefaults(
+        siteUrl,
+        undefined,
+        updatedPosts.filter((p) => p.isActive).length
+      )
+    );
+    return id;
+  } catch (error) {
+    handleFirestoreError(error, existingId ? OperationType.UPDATE : OperationType.CREATE, docPath);
+  }
+}
+
+export async function deleteBlogPost(postId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'blog_posts', postId));
+    await deleteSeoMetadataIfPresent('blog', postId);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `blog_posts/${postId}`);
   }
 }
 

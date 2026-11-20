@@ -153,17 +153,56 @@
       },
       "required": ["email", "role", "isActive", "invitedByUid", "createdAt", "updatedAt"]
     },
-    "SeoMetadata": {
-      "title": "SeoMetadata",
-      "description": "Per-page SEO metadata, Open Graph tags, canonical URL, and robots directives",
+    "BlogPost": {
+      "title": "BlogPost",
+      "description": "Educational article, GTU exam preparation guide, or study blog post",
       "type": "object",
       "properties": {
-        "pageType": { "type": "string", "enum": ["home", "branch", "semester", "subject", "paper", "static"] },
+        "title": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
+        "excerpt": { "type": "string", "minLength": 10, "maxLength": 500 },
+        "content": { "type": "string", "minLength": 20, "maxLength": 25000 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "authorName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "coverImageUrl": { "type": "string", "maxLength": 500 },
+        "coverImageAlt": { "type": "string", "maxLength": 300 },
+        "relatedBranchId": { "type": "string", "maxLength": 128 },
+        "isActive": { "type": "boolean" },
+        "publishedAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "slug", "excerpt", "content", "category", "authorName", "coverImageUrl", "coverImageAlt", "isActive", "createdAt", "updatedAt"]
+    },
+    "SeoMetadata": {
+      "title": "SeoMetadata",
+      "description": "Per-page On-Page SEO metadata, structured headings, content, FAQs, Open Graph tags, canonical URL, and robots directives",
+      "type": "object",
+      "properties": {
+        "pageType": { "type": "string", "enum": ["home", "branch", "semester", "subject", "paper", "blog", "static"] },
         "pageReferenceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "pageName": { "type": "string", "minLength": 1, "maxLength": 200 },
         "pagePath": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "focusKeyword": { "type": "string", "maxLength": 200 },
+        "secondaryKeywords": { "type": "string", "maxLength": 500 },
         "seoTitle": { "type": "string", "maxLength": 200 },
         "metaDescription": { "type": "string", "maxLength": 400 },
+        "h1Heading": { "type": "string", "maxLength": 220 },
+        "h2Headings": { "type": "array", "items": { "type": "string" } },
+        "h3Headings": { "type": "array", "items": { "type": "string" } },
+        "mainIntro": { "type": "string", "maxLength": 2000 },
+        "detailedContent": { "type": "string", "maxLength": 15000 },
+        "faqs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "question": { "type": "string" },
+              "answer": { "type": "string" }
+            }
+          }
+        },
+        "imageAltText": { "type": "string", "maxLength": 300 },
         "canonicalUrl": { "type": "string", "maxLength": 500 },
         "ogTitle": { "type": "string", "maxLength": 200 },
         "ogDescription": { "type": "string", "maxLength": 400 },
@@ -226,6 +265,10 @@
     "/papers/{paperId}": {
       "schema": { "$ref": "#/entities/Paper" },
       "description": "GTU question papers linked to subjects"
+    },
+    "/blog_posts/{postId}": {
+      "schema": { "$ref": "#/entities/BlogPost" },
+      "description": "Educational articles and GTU exam preparation blog posts"
     },
     "/paper_files/{fileId}": {
       "schema": { "$ref": "#/entities/CloudFile" },
